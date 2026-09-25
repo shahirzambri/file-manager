@@ -1,8 +1,7 @@
 @echo off
 :: ══════════════════════════════════════════════════════════════
 :: File Manager — Windows Installer
-:: Self-contained — no other files needed
-:: Double-click this to install everything
+:: Self-contained — handles Python install automatically
 :: ══════════════════════════════════════════════════════════════
 
 title File Manager Installer
@@ -32,8 +31,7 @@ if exist "%USERPROFILE%\Desktop\FileSorter\file_manager.py" (
         goto :EXIT
     )
 )
-
-goto :INSTALL
+goto :FRESH
 
 :REINSTALL
 echo   Removing old installation...
@@ -42,49 +40,137 @@ del "%USERPROFILE%\Desktop\FileManager.bat" 2>nul
 echo   Done. Reinstalling...
 echo.
 
-:INSTALL
-echo   Press Enter to start installation, or close this window to cancel.
+:FRESH
+echo   Welcome! This installer will set up File Manager on your PC.
+echo   Everything is automatic — just follow the steps.
+echo.
+echo   Press Enter to start, or close this window to cancel.
 pause >nul
 
-:: ── Step 1: Check Python ──────────────────────────────────────
+:: ══════════════════════════════════════════════════════════════
+:: STEP 1 — CHECK AND INSTALL PYTHON
+:: ══════════════════════════════════════════════════════════════
 echo.
-echo   [1/5] Checking Python 3...
+echo   [1/6] Checking Python...
 echo.
 
+:: Check if Python already exists
 python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo   ERROR: Python 3 not found!
+if %errorlevel% == 0 (
+    for /f "tokens=*" %%i in ('python --version 2^>^&1') do set PY_VER=%%i
+    echo   OK  Python already installed: %PY_VER%
+    goto :PYTHON_READY
+)
+
+:: Python not found — download and install it automatically
+echo   Python not found. Installing automatically...
+echo.
+echo   Downloading Python installer from python.org...
+echo   This may take 1-2 minutes depending on your internet speed.
+echo.
+
+:: Check if curl is available (Windows 10+)
+curl --version >nul 2>&1
+if %errorlevel% == 0 (
+    :: Download Python using curl
+    curl -L -o "%TEMP%\python_installer.exe" "https://www.python.org/ftp/python/3.12.0/python-3.12.0-amd64.exe" --progress-bar
+) else (
+    :: Download using PowerShell as fallback
+    echo   Using PowerShell to download...
+    powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.0/python-3.12.0-amd64.exe' -OutFile '%TEMP%\python_installer.exe'}"
+)
+
+if not exist "%TEMP%\python_installer.exe" (
     echo.
-    echo   Please install Python 3:
+    echo   ERROR: Could not download Python.
+    echo.
+    echo   Please install manually:
     echo   1. Go to https://python.org/downloads
-    echo   2. Download the Windows installer
-    echo   3. Run it - TICK "Add Python to PATH"
-    echo   4. Double-click this file again
+    echo   2. Download and run the installer
+    echo   3. TICK "Add Python to PATH"
+    echo   4. Run this file again
     echo.
     start https://www.python.org/downloads/
     pause
     exit /b 1
 )
 
-for /f "tokens=*" %%i in ('python --version 2^>^&1') do set PY_VER=%%i
-echo   OK  Found: %PY_VER%
-
-:: ── Step 2: Install Pillow ─────────────────────────────────────
 echo.
-echo   [2/5] Installing Pillow (image compression)...
+echo   Download complete. Installing Python now...
+echo   A Python installer window will appear.
+echo.
+echo   IMPORTANT:
+echo   +------------------------------------------+
+echo   ^|  Tick "Add Python to PATH"               ^|
+echo   ^|  Then click Install Now                  ^|
+echo   +------------------------------------------+
+echo.
+echo   Press Enter when you are ready...
+pause >nul
+
+:: Run Python installer
+"%TEMP%\python_installer.exe" /passive PrependPath=1 Include_pip=1
+
+:: Wait for install to complete
+echo.
+echo   Waiting for Python installation to complete...
+timeout /t 10 /nobreak >nul
+
+:: Refresh environment to pick up new Python
+call refreshenv 2>nul
+
+:: Check again
+python --version >nul 2>&1
+if %errorlevel% neq 0 (
+    :: Try py launcher
+    py --version >nul 2>&1
+    if %errorlevel% == 0 (
+        set PYTHON_CMD=py
+        goto :PYTHON_READY
+    )
+    echo.
+    echo   Python installed but not detected yet.
+    echo   Please CLOSE this window and run the installer again.
+    echo.
+    pause
+    exit /b 1
+)
+
+:PYTHON_READY
+:: Set python command
+set PYTHON_CMD=python
+python --version >nul 2>&1
+if %errorlevel% neq 0 (
+    set PYTHON_CMD=py
+)
+
+for /f "tokens=*" %%i in ('%PYTHON_CMD% --version 2^>^&1') do set PY_VER=%%i
+echo   OK  Python ready: %PY_VER%
+
+:: Clean up installer
+del "%TEMP%\python_installer.exe" 2>nul
+
+:: ══════════════════════════════════════════════════════════════
+:: STEP 2 — INSTALL PILLOW
+:: ══════════════════════════════════════════════════════════════
+echo.
+echo   [2/6] Installing Pillow (image compression)...
 echo.
 
-python -m pip install Pillow --quiet --upgrade
-python -c "from PIL import Image" >nul 2>&1
+%PYTHON_CMD% -m pip install Pillow --quiet --upgrade
+%PYTHON_CMD% -c "from PIL import Image" >nul 2>&1
 if %errorlevel% == 0 (
     echo   OK  Pillow installed - compression enabled
 ) else (
     echo   WARN Pillow failed - compression will be skipped
+    echo        You can try later: pip install Pillow
 )
 
-:: ── Step 3: Create folder ──────────────────────────────────────
+:: ══════════════════════════════════════════════════════════════
+:: STEP 3 — CREATE FOLDER
+:: ══════════════════════════════════════════════════════════════
 echo.
-echo   [3/5] Creating FileSorter folder...
+echo   [3/6] Creating FileSorter folder...
 echo.
 
 if not exist "%USERPROFILE%\Desktop\FileSorter" (
@@ -92,53 +178,93 @@ if not exist "%USERPROFILE%\Desktop\FileSorter" (
 )
 echo   OK  %USERPROFILE%\Desktop\FileSorter
 
-:: ── Step 4: Write scripts using Python ────────────────────────
+:: ══════════════════════════════════════════════════════════════
+:: STEP 4 — COPY OR DOWNLOAD SCRIPTS
+:: ══════════════════════════════════════════════════════════════
 echo.
-echo   [4/5] Writing scripts...
+echo   [4/6] Getting scripts...
 echo.
 
-:: Write file_manager.py using Python heredoc trick
-python -c "
-import sys, os
-dest = os.path.join(os.path.expanduser('~'), 'Desktop', 'FileSorter')
+set "DEST=%USERPROFILE%\Desktop\FileSorter"
+set "BAT_DIR=%~dp0"
 
-# Try to copy from same folder as this bat file first
-import pathlib
-bat_dir = pathlib.Path(r'%~dp0').parent
-fm_src = bat_dir / 'file_manager.py'
-ui_src = bat_dir / 'file_manager_ui.py'
+:: Try to find scripts relative to this bat file
+:: BAT is in windows/ so parent folder has the .py files
+for %%F in ("%BAT_DIR%..") do set "REPO_ROOT=%%~fF"
 
-import shutil
-copied = 0
+:: Copy file_manager.py
+if exist "%REPO_ROOT%\file_manager.py" (
+    copy /y "%REPO_ROOT%\file_manager.py" "%DEST%\file_manager.py" >nul
+    echo   OK  file_manager.py copied
+) else (
+    echo   Downloading file_manager.py from GitHub...
+    curl -L -o "%DEST%\file_manager.py" "https://raw.githubusercontent.com/shahirzambri/file-manager/main/file_manager.py" 2>nul
+    if exist "%DEST%\file_manager.py" (
+        echo   OK  file_manager.py downloaded
+    ) else (
+        powershell -Command "Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/shahirzambri/file-manager/main/file_manager.py' -OutFile '%DEST%\file_manager.py'"
+        echo   OK  file_manager.py downloaded
+    )
+)
 
-if fm_src.exists():
-    shutil.copy2(fm_src, os.path.join(dest, 'file_manager.py'))
-    print('  OK  file_manager.py copied')
-    copied += 1
+:: Copy file_manager_ui.py
+if exist "%REPO_ROOT%\file_manager_ui.py" (
+    copy /y "%REPO_ROOT%\file_manager_ui.py" "%DEST%\file_manager_ui.py" >nul
+    echo   OK  file_manager_ui.py copied
+) else (
+    echo   Downloading file_manager_ui.py from GitHub...
+    curl -L -o "%DEST%\file_manager_ui.py" "https://raw.githubusercontent.com/shahirzambri/file-manager/main/file_manager_ui.py" 2>nul
+    if exist "%DEST%\file_manager_ui.py" (
+        echo   OK  file_manager_ui.py downloaded
+    ) else (
+        powershell -Command "Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/shahirzambri/file-manager/main/file_manager_ui.py' -OutFile '%DEST%\file_manager_ui.py'"
+        echo   OK  file_manager_ui.py downloaded
+    )
+)
 
-if ui_src.exists():
-    shutil.copy2(ui_src, os.path.join(dest, 'file_manager_ui.py'))
-    print('  OK  file_manager_ui.py copied')
-    copied += 1
+:: Verify scripts exist
+if not exist "%DEST%\file_manager.py" (
+    echo.
+    echo   ERROR: Could not get file_manager.py
+    echo   Check your internet connection and try again.
+    pause
+    exit /b 1
+)
 
-if copied < 2:
-    # Download from GitHub
-    import urllib.request
-    base = 'https://raw.githubusercontent.com/shahirzambri/file-manager/main/'
-    for fname in ['file_manager.py', 'file_manager_ui.py']:
-        dst = os.path.join(dest, fname)
-        if not os.path.exists(dst):
-            try:
-                print(f'  Downloading {fname} from GitHub...')
-                urllib.request.urlretrieve(base + fname, dst)
-                print(f'  OK  {fname} downloaded')
-            except Exception as e:
-                print(f'  WARN Could not get {fname}: {e}')
-"
+if not exist "%DEST%\file_manager_ui.py" (
+    echo.
+    echo   ERROR: Could not get file_manager_ui.py
+    echo   Check your internet connection and try again.
+    pause
+    exit /b 1
+)
 
-:: ── Step 5: Create launcher ────────────────────────────────────
+:: ══════════════════════════════════════════════════════════════
+:: STEP 5 — VERIFY SCRIPTS WORK
+:: ══════════════════════════════════════════════════════════════
 echo.
-echo   [5/5] Creating launcher on Desktop...
+echo   [5/6] Verifying scripts...
+echo.
+
+%PYTHON_CMD% -m py_compile "%DEST%\file_manager.py" >nul 2>&1
+if %errorlevel% == 0 (
+    echo   OK  file_manager.py verified
+) else (
+    echo   WARN file_manager.py may have issues
+)
+
+%PYTHON_CMD% -m py_compile "%DEST%\file_manager_ui.py" >nul 2>&1
+if %errorlevel% == 0 (
+    echo   OK  file_manager_ui.py verified
+) else (
+    echo   WARN file_manager_ui.py may have issues
+)
+
+:: ══════════════════════════════════════════════════════════════
+:: STEP 6 — CREATE LAUNCHER
+:: ══════════════════════════════════════════════════════════════
+echo.
+echo   [6/6] Creating launcher on Desktop...
 echo.
 
 (
@@ -156,22 +282,28 @@ echo.
     echo.
     echo :: Start server - browser opens automatically
     echo python "%%USERPROFILE%%\Desktop\FileSorter\file_manager_ui.py"
+    echo if %%errorlevel%% neq 0 ^(
+    echo     py "%%USERPROFILE%%\Desktop\FileSorter\file_manager_ui.py"
+    echo ^)
 ) > "%USERPROFILE%\Desktop\FileManager.bat"
 
 echo   OK  FileManager.bat created on Desktop
 
-:: ── Done ───────────────────────────────────────────────────────
+:: ══════════════════════════════════════════════════════════════
+:: DONE
+:: ══════════════════════════════════════════════════════════════
 echo.
 echo   +--------------------------------------------+
 echo   ^|        Installation Complete!             ^|
 echo   +--------------------------------------------+
 echo.
-echo   Files created:
-echo     %USERPROFILE%\Desktop\FileSorter\file_manager.py
-echo     %USERPROFILE%\Desktop\FileSorter\file_manager_ui.py
-echo     %USERPROFILE%\Desktop\FileManager.bat
+echo   Installed:
+echo     - Python %PY_VER%
+echo     - Pillow  (image compression)
+echo     - File Manager scripts
+echo     - FileManager.bat launcher on Desktop
 echo.
-echo   To launch File Manager anytime:
+echo   HOW TO USE:
 echo   Double-click FileManager.bat on your Desktop
 echo.
 set /p LAUNCH="  Launch File Manager now? (Y/n): "
@@ -180,12 +312,12 @@ if /i "%LAUNCH%"=="no" goto :DONE
 
 :LAUNCH
 echo.
-echo   Launching...
+echo   Starting File Manager...
 start "" "%USERPROFILE%\Desktop\FileManager.bat"
 goto :DONE
 
 :EXIT
-echo   Cancelled.
+echo   Exiting...
 
 :DONE
 echo.
