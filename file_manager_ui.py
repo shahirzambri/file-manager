@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-File Manager — Web UI
-Works on both macOS and Windows.
-Browser opens automatically on start.
+File Manager — Desktop UI using PyWebView
+Opens as a proper desktop window — no browser needed.
+Works on macOS and Windows.
 """
 
-# Ignore SIGHUP (macOS only — keeps server alive when launched from Dock)
 import signal as _sig
 try:
     _sig.signal(_sig.SIGHUP, _sig.SIG_IGN)
@@ -15,7 +14,6 @@ except Exception:
 import http.server
 import socketserver
 import threading
-import webbrowser
 import json
 import sys
 import os
@@ -31,7 +29,7 @@ try:
 except Exception:
     pass
 
-# Import core script
+# ── Import core script ───────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
 try:
     from file_manager import (
@@ -44,6 +42,14 @@ except ImportError:
     MANAGER_OK    = False
     PIL_AVAILABLE = False
 
+# ── Import PyWebView ─────────────────────────────────────────
+try:
+    import webview
+    WEBVIEW_OK = True
+except ImportError:
+    WEBVIEW_OK = False
+    print("PyWebView not installed. Run: pip3 install pywebview")
+
 PORT  = 8765
 _log  = []
 _busy = False
@@ -55,7 +61,6 @@ _lock = threading.Lock()
 # ──────────────────────────────────────────────────────────────
 
 def free_port(port):
-    """Kill any process using the port."""
     try:
         if sys.platform == "win32":
             result = subprocess.run(
@@ -89,7 +94,6 @@ def free_port(port):
 
 
 def port_free(port):
-    """Return True if port is available."""
     try:
         s = socket.create_connection(("127.0.0.1", port), timeout=1)
         s.close()
@@ -135,8 +139,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/add-folder": self.handle_add_folder()
         else:                            self.send_error(404)
 
-    # ── Pages ─────────────────────────────────────────────────
-
     def serve_page(self):
         m = ("file_manager.py loaded OK" if MANAGER_OK
              else "ERROR: file_manager.py not found!")
@@ -165,11 +167,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.respond(200, "application/json", json.dumps(r).encode())
 
     def serve_browse(self):
-        """Open native folder picker — macOS and Windows."""
+        """
+        Open native folder picker.
+        Uses PyWebView dialog if available — cleaner than osascript.
+        Falls back to osascript on Mac and PowerShell on Windows.
+        """
         path = ""
         try:
-            if sys.platform == "win32":
-                # Windows folder picker via PowerShell
+            if WEBVIEW_OK:
+                # PyWebView native folder picker
+                result = webview.windows[0].create_file_dialog(
+                    webview.FOLDER_DIALOG
+                )
+                if result and len(result) > 0:
+                    path = result[0]
+            elif sys.platform == "win32":
                 ps = (
                     "Add-Type -AssemblyName System.Windows.Forms; "
                     "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
@@ -182,7 +194,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 )
                 path = r.stdout.strip()
             else:
-                # macOS folder picker via osascript
                 r = subprocess.run(
                     ["osascript", "-e",
                      "POSIX path of (choose folder with prompt "
@@ -195,8 +206,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
         self.respond(200, "application/json",
                      json.dumps({"path": path}).encode())
-
-    # ── POST handlers ─────────────────────────────────────────
 
     def _parse_post(self):
         n   = int(self.headers.get("Content-Length", 0))
@@ -235,8 +244,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             args=(name, max_kb),
             daemon=True
         ).start()
-
-    # ── Background tasks ──────────────────────────────────────
 
     def task(self, folder, dry, subsort):
         global _log, _busy
@@ -277,8 +284,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with _lock:
                 _busy = False
 
-    # ── HTTP helper ───────────────────────────────────────────
-
     def respond(self, code, ctype, body):
         self.send_response(code)
         self.send_header("Content-Type",   ctype)
@@ -304,7 +309,7 @@ HTML = r"""<!DOCTYPE html>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;background:#16161e;color:#c0caf5;min-height:100vh;padding-bottom:54px}
-.hdr{background:#1f2335;padding:22px 20px;text-align:center;border-bottom:1px solid #292e42}
+.hdr{background:#1f2335;padding:22px 20px;text-align:center;border-bottom:1px solid #292e42;-webkit-app-region:drag}
 .hdr h1{font-size:22px;font-weight:700;margin-bottom:5px}
 .hdr p{font-size:12px;color:#565f89}
 .wrap{max-width:740px;margin:0 auto;padding:24px 20px}
@@ -567,46 +572,80 @@ function doRun(){
 
 
 # ──────────────────────────────────────────────────────────────
-#  MAIN
+#  MAIN — PyWebView Desktop Window
 # ──────────────────────────────────────────────────────────────
 
-def main():
-    # Ignore SIGHUP on macOS
-    try:
-        signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    except Exception:
-        pass
-
-    # Free port
-    print(f"  Freeing port {PORT}...")
+def start_server():
+    """Start HTTP server in background thread."""
     free_port(PORT)
     for _ in range(10):
         if port_free(PORT):
             break
         time.sleep(0.5)
-
-    url    = f"http://localhost:{PORT}"
     server = Server(("", PORT), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
+
+
+def wait_for_server(port, timeout=10):
+    """Wait until server is actually responding."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=1)
+            s.close()
+            return True
+        except Exception:
+            time.sleep(0.3)
+    return False
+
+
+def main():
+    try:
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    except Exception:
+        pass
+
+    if not WEBVIEW_OK:
+        print("PyWebView not installed.")
+        print("Run: pip3 install pywebview")
+        sys.exit(1)
+
+    url = f"http://localhost:{PORT}"
 
     print("")
-    print("  File Manager is running!")
+    print("  File Manager starting...")
     print("  " + "-" * 40)
-    print(f"  {url}")
-    print("  Press Ctrl + C to quit.")
+
+    # Start server in background
+    start_server()
+
+    # Wait for server to be ready
+    if not wait_for_server(PORT):
+        print("  ERROR: Server failed to start.")
+        sys.exit(1)
+
+    print("  Server ready. Opening desktop window...")
     print("  " + "-" * 40 + "\n")
 
-    # Open browser once after 1.5 seconds
-    threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    # Create desktop window using PyWebView
+    window = webview.create_window(
+        title          = "File Manager",
+        url            = url,
+        width          = 820,
+        height         = 700,
+        min_size       = (720, 600),
+        resizable      = True,
+        on_top         = False,
+        shadow         = True,
+        background_color = "#16161e",
+    )
 
-    try:
-        server.serve_forever()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    finally:
-        try:
-            server.shutdown()
-        except Exception:
-            pass
+    # Start PyWebView — this blocks until window is closed
+    webview.start(debug=False)
+
+    print("\n  File Manager closed. Goodbye!\n")
 
 
 if __name__ == "__main__":
