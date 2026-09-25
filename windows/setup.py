@@ -24,16 +24,21 @@ FILES = {
 # ── Launcher content ──────────────────────────────────────────────
 LAUNCHER = r"""@echo off
 title File Manager
-echo Starting File Manager...
+echo.
+echo   Starting File Manager...
+echo.
 
-:: Kill old instances on port 8765
+:: Kill any old instance on port 8765
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8765" ^| findstr "LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
-timeout /t 2 /nobreak >nul
+timeout /t 1 /nobreak >nul
 
 :: Start server
-start /B python "%USERPROFILE%\Desktop\FileSorter\file_manager_ui.py"
+:: Browser opens automatically from inside file_manager_ui.py
+:: Do NOT open browser here — would cause double tab
+python "%USERPROFILE%\Desktop\FileSorter\file_manager_ui.py"
+"""
 
 :: Wait for server to respond
 echo Waiting for server...
