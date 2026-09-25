@@ -52,7 +52,6 @@ echo.
 
 set PYTHON_CMD=
 
-:: Real test — not just --version
 python -c "print('ok')" >nul 2>&1
 if %errorlevel% == 0 set PYTHON_CMD=python
 
@@ -75,13 +74,6 @@ if "%PYTHON_CMD%"=="" (
     )
 )
 
-if "%PYTHON_CMD%"=="" (
-    if exist "%USERPROFILE%\AppData\Local\Programs\Python\Python310\python.exe" (
-        "%USERPROFILE%\AppData\Local\Programs\Python\Python310\python.exe" -c "print('ok')" >nul 2>&1
-        if %errorlevel% == 0 set "PYTHON_CMD=%USERPROFILE%\AppData\Local\Programs\Python\Python310\python.exe"
-    )
-)
-
 if "%PYTHON_CMD%"=="" goto :INSTALL_PYTHON
 
 echo   OK  Python is working
@@ -101,7 +93,7 @@ if %errorlevel% == 0 (
 if not exist "%TEMP%\python_installer.exe" (
     echo.
     echo   ERROR: Could not download Python.
-    echo   Please install manually from https://python.org/downloads
+    echo   Please install from https://python.org/downloads
     echo   IMPORTANT: Tick "Add Python to PATH"
     echo.
     start https://www.python.org/downloads/
@@ -119,18 +111,17 @@ set "PATH=%USERPROFILE%\AppData\Local\Programs\Python\Python312;%USERPROFILE%\Ap
 python -c "print('ok')" >nul 2>&1
 if %errorlevel% == 0 (
     set PYTHON_CMD=python
-    echo   OK  Python installed successfully
+    echo   OK  Python installed
     goto :STEP2
 )
 
 if exist "%USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe" (
     set "PYTHON_CMD=%USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe"
-    echo   OK  Python installed successfully
+    echo   OK  Python installed
     goto :STEP2
 )
 
 echo.
-echo   Python installed but needs a new Command Prompt window.
 echo   Please close this window and run the installer again.
 echo.
 pause
@@ -228,35 +219,32 @@ if %errorlevel% == 0 (echo   OK  file_manager_ui.py) else (echo   WARN file_mana
 
 :: ══════════════════════════════════════════════════════════════
 :: STEP 6 — CREATE LAUNCHER
-:: Written by Python to avoid all bat escaping issues
+:: Written directly — no Python inline — no escaping issues
 :: ══════════════════════════════════════════════════════════════
 :STEP6
 echo.
 echo   [6/6] Creating launcher...
 echo.
 
-%PYTHON_CMD% -c "
-import os
-dest  = os.path.join(os.path.expanduser('~'), 'Desktop', 'FileManager.bat')
-script = os.path.join(os.path.expanduser('~'), 'Desktop', 'FileSorter', 'file_manager_ui.py')
-lines = [
-    '@echo off',
-    'title File Manager',
-    'echo.',
-    'echo   Starting File Manager...',
-    'echo.',
-    'python \"' + script + '\"',
-    'if errorlevel 1 py \"' + script + '\"',
-    'if errorlevel 1 (',
-    '    echo.',
-    '    echo   ERROR: Could not start. Make sure Python is installed.',
-    '    pause',
-    ')',
-]
-with open(dest, 'w') as f:
-    f.write('\r\n'.join(lines) + '\r\n')
-print('  OK  FileManager.bat created on Desktop')
-"
+set "LAUNCHER=%USERPROFILE%\Desktop\FileManager.bat"
+set "SCRIPT=%USERPROFILE%\Desktop\FileSorter\file_manager_ui.py"
+
+:: Write launcher line by line — simple and reliable
+echo @echo off                                        > "%LAUNCHER%"
+echo title File Manager                              >> "%LAUNCHER%"
+echo echo.                                           >> "%LAUNCHER%"
+echo echo   Starting File Manager...                 >> "%LAUNCHER%"
+echo echo.                                           >> "%LAUNCHER%"
+echo python "%SCRIPT%"                               >> "%LAUNCHER%"
+echo if errorlevel 1 py "%SCRIPT%"                  >> "%LAUNCHER%"
+echo if errorlevel 1 (                               >> "%LAUNCHER%"
+echo     echo.                                       >> "%LAUNCHER%"
+echo     echo   ERROR: Could not start.              >> "%LAUNCHER%"
+echo     echo   Make sure Python is installed.       >> "%LAUNCHER%"
+echo     pause                                       >> "%LAUNCHER%"
+echo )                                               >> "%LAUNCHER%"
+
+echo   OK  FileManager.bat created on Desktop
 
 :: ══════════════════════════════════════════════════════════════
 :: DONE
