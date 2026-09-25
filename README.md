@@ -71,3 +71,14 @@ chmod +x ~/Desktop/FileManager_Setup.command
 
 # Run
 python3 ~/Desktop/FileSorter/file_manager_ui.py
+
+## 🗑️ Uninstall
+
+### Mac
+Double-click `mac/FileManager_Uninstall.command`
+
+### Windows
+Double-click `windows/FileManager_Uninstall.bat`
+
+> Your sorted files and folders are never touched.
+> Only the app itself is removed.
