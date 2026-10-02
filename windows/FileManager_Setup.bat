@@ -1,6 +1,7 @@
 @echo off
 :: ══════════════════════════════════════════════════════════════
 :: File Manager — Windows Installer
+:: Opens as desktop window via PyWebView
 :: ══════════════════════════════════════════════════════════════
 
 title File Manager Installer
@@ -47,7 +48,7 @@ echo.
 :: STEP 1 — FIND PYTHON
 :: ══════════════════════════════════════════════════════════════
 echo.
-echo   [1/6] Checking Python...
+echo   [1/7] Checking Python...
 echo.
 
 set PYTHON_CMD=
@@ -91,11 +92,9 @@ if %errorlevel% == 0 (
 )
 
 if not exist "%TEMP%\python_installer.exe" (
-    echo.
     echo   ERROR: Could not download Python.
     echo   Please install from https://python.org/downloads
     echo   IMPORTANT: Tick "Add Python to PATH"
-    echo.
     start https://www.python.org/downloads/
     pause
     exit /b 1
@@ -121,9 +120,7 @@ if exist "%USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe" (
     goto :STEP2
 )
 
-echo.
 echo   Please close this window and run the installer again.
-echo.
 pause
 exit /b 1
 
@@ -132,7 +129,7 @@ exit /b 1
 :: ══════════════════════════════════════════════════════════════
 :STEP2
 echo.
-echo   [2/6] Installing Pillow...
+echo   [2/7] Installing Pillow...
 echo.
 
 %PYTHON_CMD% -m pip install Pillow --quiet --upgrade
@@ -144,22 +141,46 @@ if %errorlevel% == 0 (
 )
 
 :: ══════════════════════════════════════════════════════════════
-:: STEP 3 — CREATE FOLDER
+:: STEP 3 — PYWEBVIEW
 :: ══════════════════════════════════════════════════════════════
 :STEP3
 echo.
-echo   [3/6] Creating FileSorter folder...
+echo   [3/7] Installing PyWebView (desktop window)...
+echo.
+
+%PYTHON_CMD% -m pip install pywebview --quiet --upgrade
+%PYTHON_CMD% -c "import webview" >nul 2>&1
+if %errorlevel% == 0 (
+    echo   OK  PyWebView installed - app opens as desktop window
+) else (
+    echo   WARN PyWebView failed - will try alternative
+    %PYTHON_CMD% -m pip install pywebview[winforms] --quiet --upgrade
+    %PYTHON_CMD% -c "import webview" >nul 2>&1
+    if %errorlevel% == 0 (
+        echo   OK  PyWebView installed via winforms
+    ) else (
+        echo   WARN PyWebView could not be installed
+        echo        App will open in browser instead
+    )
+)
+
+:: ══════════════════════════════════════════════════════════════
+:: STEP 4 — CREATE FOLDER
+:: ══════════════════════════════════════════════════════════════
+:STEP4
+echo.
+echo   [4/7] Creating FileSorter folder...
 echo.
 
 if not exist "%USERPROFILE%\Desktop\FileSorter" mkdir "%USERPROFILE%\Desktop\FileSorter"
 echo   OK  %USERPROFILE%\Desktop\FileSorter
 
 :: ══════════════════════════════════════════════════════════════
-:: STEP 4 — GET SCRIPTS
+:: STEP 5 — GET SCRIPTS
 :: ══════════════════════════════════════════════════════════════
-:STEP4
+:STEP5
 echo.
-echo   [4/6] Getting scripts...
+echo   [5/7] Getting scripts...
 echo.
 
 set "DEST=%USERPROFILE%\Desktop\FileSorter"
@@ -204,11 +225,11 @@ if exist "%REPO_ROOT%\file_manager_ui.py" (
 )
 
 :: ══════════════════════════════════════════════════════════════
-:: STEP 5 — VERIFY
+:: STEP 6 — VERIFY
 :: ══════════════════════════════════════════════════════════════
-:STEP5
+:STEP6
 echo.
-echo   [5/6] Verifying...
+echo   [6/7] Verifying...
 echo.
 
 %PYTHON_CMD% -m py_compile "%DEST%\file_manager.py" >nul 2>&1
@@ -218,18 +239,18 @@ if %errorlevel% == 0 (echo   OK  file_manager.py) else (echo   WARN file_manager
 if %errorlevel% == 0 (echo   OK  file_manager_ui.py) else (echo   WARN file_manager_ui.py has issues)
 
 :: ══════════════════════════════════════════════════════════════
-:: STEP 6 — CREATE LAUNCHER
-:: Written directly — no Python inline — no escaping issues
+:: STEP 7 — CREATE LAUNCHER
+:: Simple launcher — no pipe chars — no syntax errors
+:: PyWebView opens desktop window automatically
 :: ══════════════════════════════════════════════════════════════
-:STEP6
+:STEP7
 echo.
-echo   [6/6] Creating launcher...
+echo   [7/7] Creating launcher...
 echo.
 
 set "LAUNCHER=%USERPROFILE%\Desktop\FileManager.bat"
 set "SCRIPT=%USERPROFILE%\Desktop\FileSorter\file_manager_ui.py"
 
-:: Write launcher line by line — simple and reliable
 echo @echo off                                        > "%LAUNCHER%"
 echo title File Manager                              >> "%LAUNCHER%"
 echo echo.                                           >> "%LAUNCHER%"
@@ -254,7 +275,17 @@ echo   +--------------------------------------------+
 echo   ^|        Installation Complete!             ^|
 echo   +--------------------------------------------+
 echo.
-echo   TO LAUNCH FILE MANAGER ANYTIME:
+echo   Installed:
+echo     - Python
+echo     - Pillow (image compression)
+echo     - PyWebView (desktop window)
+echo     - File Manager scripts
+echo     - FileManager.bat launcher on Desktop
+echo.
+echo   File Manager opens as a DESKTOP WINDOW
+echo   No browser needed!
+echo.
+echo   TO LAUNCH ANYTIME:
 echo   Double-click FileManager.bat on your Desktop
 echo.
 set /p LAUNCH="  Launch File Manager now? (Y/n): "
@@ -263,7 +294,7 @@ if /i "%LAUNCH%"=="no" goto :DONE
 
 :LAUNCH
 echo.
-echo   Starting...
+echo   Starting File Manager...
 start "" "%USERPROFILE%\Desktop\FileManager.bat"
 goto :DONE
 
