@@ -16,13 +16,12 @@ A macOS and Windows automation tool that organises advertising and creative file
 |---------|-------------|
 | 🗂 Auto Folder Creation | Only creates folders when matching files are found |
 | 📂 Smart Sorting | Case-insensitive, plural-aware, 90% fuzzy keyword matching |
-| 📐 Dimension Sub-sorting | Groups files by image size e.g. 1200x628 — user confirms first |
+| 📐 Dimension Sub-sorting | Groups files by image size e.g. 1200x628 — optional toggle |
 | 🗜️ File Compression | Reduces file sizes to preset KB/MB limits per platform |
 | ✏️ Custom Folders | Add your own folder rules on the fly — saved permanently |
-| 🖥️ Desktop App | Opens as a native desktop window — no browser needed |
+| 🖥️ Desktop App | Opens as a desktop window with a clean frosted-glass design |
 | 👁 Dry Run Mode | Preview everything safely before applying any changes |
 | 🔍 Fuzzy Matching | Handles plurals (PMAXS = PMAX), typos and case differences |
-| 🔁 Remembers Custom Rules | Custom folders saved to custom_config.json for future runs |
 | 🌐 Cross Platform | Works on both macOS and Windows |
 
 ---
@@ -32,13 +31,14 @@ A macOS and Windows automation tool that organises advertising and creative file
 | | macOS | Windows |
 |--|-------|---------|
 | OS | macOS 10.13+ | Windows 10+ |
-| Python | 3.9+ | 3.9+ (auto-installed) |
+| Python | 3.9+ (install first) | 3.9+ (auto-installed) |
 | Pillow | Auto-installed | Auto-installed |
 | PyWebView | Auto-installed | Auto-installed |
+| Admin rights | Not needed | Not needed |
 
-> **Windows users** — Python and PyWebView are installed automatically by the installer.
+> **Mac users** — install Python first from [python.org/downloads](https://python.org/downloads)
 >
-> **Mac users** — Python must be installed first from [python.org/downloads](https://python.org/downloads)
+> **Windows users** — Python is installed automatically if it is missing.
 
 ---
 
@@ -51,18 +51,19 @@ A macOS and Windows automation tool that organises advertising and creative file
 3. Unzip the downloaded file
 4. Open the **mac** folder
 5. Double-click **FileManager_Setup.command**
-6. If macOS blocks it — Right-click then Open then Open again
+6. If macOS blocks it — Right-click, then Open, then Open again
 7. Follow the on-screen instructions
-8. **FileManager.app** appears on your Desktop — double-click it anytime to launch
+8. **FileManager.command** appears on your Desktop — double-click it anytime to launch
+9. Tip: drag FileManager.command to your Dock for quick access
 
 ### Windows
 
 1. Click the green **Code** button on this page and click **Download ZIP**
-2. Right-click the ZIP and click **Extract All** then **Extract**
-3. Open the extracted folder then open the **windows** folder
+2. Right-click the ZIP and click **Extract All**, then **Extract**
+3. Open the extracted folder, then open the **windows** folder
 4. Double-click **FileManager_Setup.bat**
-5. If Windows blocks it — click **More info** then **Run anyway**
-6. Python and PyWebView install automatically if not found on your PC
+5. If Windows blocks it — click **More info**, then **Run anyway**
+6. Python, Pillow and PyWebView install automatically if needed
 7. **FileManager.bat** appears on your Desktop — double-click it anytime to launch
 
 ---
@@ -70,11 +71,11 @@ A macOS and Windows automation tool that organises advertising and creative file
 ## 🖥️ How to Use
 
 1. Double-click the launcher on your Desktop
-2. File Manager opens as a desktop window directly — no browser needed
-3. Click **Browse** and select your folder containing files
-4. Keep **Dry Run ON** and click **Run** to preview what will happen
+2. File Manager opens as a desktop window
+3. Click **Browse** and select your folder of files
+4. Keep **Dry Run ON** and click **Run** to preview (button is blue)
 5. Check the output log looks correct
-6. Turn off **Dry Run** and click **Run** again to apply for real
+6. Turn **Dry Run OFF** and click **Run** again to apply for real (button turns red)
 7. Done — files are sorted, sub-sorted and compressed ✅
 
 ---
@@ -82,16 +83,16 @@ A macOS and Windows automation tool that organises advertising and creative file
 ## ⚙️ How It Works
 
 **Step 1 — Auto-create folders**
-Only creates folders when matching files are found. No empty folders ever created.
+Only creates folders when matching files are found. No empty folders.
 
 **Step 2 — Sort files into folders**
-Uses keyword matching, aliases and 90% fuzzy matching. Case-insensitive and plural-aware.
+Keyword matching, aliases and 90% fuzzy matching. Case-insensitive and plural-aware.
 
-**Step 3 — Sub-sort by dimensions (you confirm first)**
-Groups files by image size e.g. 1200x628. Only runs if 2 or more different sizes exist in a folder. Reads actual image metadata if no size is in the filename.
+**Step 3 — Sub-sort by dimensions (optional)**
+Groups files by image size e.g. 1200x628. Only runs if 2 or more different sizes exist in a folder. Reads image metadata if the size is not in the filename.
 
 **Step 4 — Compress file sizes**
-Reduces to preset KB/MB limits per platform. PNG always kept as-is (lossless format). Dimensions are never changed — only quality is reduced.
+Reduces JPG, WebP and GIF files to preset limits. PNG is kept as-is. Dimensions never change — only quality is reduced.
 
 ---
 
@@ -106,7 +107,7 @@ Reduces to preset KB/MB limits per platform. PNG always kept as-is (lossless for
 | Alias | GDB_1200x628.jpg | GOOGLE DISCOVERY BANNER/ ✅ |
 | Alias | MAN_300x250.jpg | MICROSOFT AUDIENCE NETWORK/ ✅ |
 | 90% fuzzy | GOOGL_DISCOVERY_BANNER.jpg | GOOGLE DISCOVERY BANNER/ ✅ |
-| No match | RANDOM_FILE.jpg | left in place, no folder created ⏭️ |
+| No match | RANDOM_FILE.jpg | left in place ⏭️ |
 
 ---
 
@@ -140,72 +141,30 @@ Reduces to preset KB/MB limits per platform. PNG always kept as-is (lossless for
 | XIAO HONG SHU | — | 700 KB |
 | YT COMP | — | 100 KB |
 
-Folders without a size limit — files are sorted but not compressed.
+Folders without a size limit are sorted but not compressed.
 
 ---
 
-## ✏️ Customisation
+## 🆕 Custom Folders
 
-Open **file_manager.py** in any text editor.
+When files don't match any folder, a panel appears at the bottom of the app.
 
-**Add a new folder**
-
-Find the FOLDERS list and add your folder name:
-
-    FOLDERS = [
-        "PMAX",
-        "MY NEW FOLDER",
-    ]
-
-**Set a size limit in KB**
-
-Find SIZE_RULES and add your limit:
-
-    SIZE_RULES = {
-        "MY NEW FOLDER" : 500,
-    }
-
-**Add a short alias**
-
-Find ALIASES and add your shortcut:
-
-    ALIASES = {
-        "GDB" : "GOOGLE DISCOVERY BANNER",
-        "XYZ" : "MY NEW FOLDER",
-    }
-
-**Adjust fuzzy match sensitivity**
-
-    SIMILARITY_THRESHOLD = 0.90
-
-0.90 means 90% match required. Higher is stricter. Lower is looser.
-
----
-
-## 🆕 Custom Folders via UI
-
-When files are not matched by any existing folder, a yellow panel appears automatically at the bottom of the app window.
-
-- Type the folder name you want to create
+- Type a folder name
 - Optionally set a max file size in KB
-- Click **Create and Sort**
-- The folder is saved permanently and remembered for all future runs
+- Click **Create & Sort**
+- The folder is saved and remembered for all future runs
 
-If the name you type is similar to an existing folder (fuzzy match), it will ask if you want to use that instead. If it is completely new, it asks for confirmation before creating.
+If the name is similar to an existing folder, it uses that folder. If it is new, the app asks you to confirm first.
 
 ---
 
 ## 🗑️ Uninstall
 
-**macOS**
+**macOS** — open the mac folder and double-click **FileManager_Uninstall.command**
 
-Open the mac folder from the downloaded ZIP and double-click **FileManager_Uninstall.command**
+**Windows** — open the windows folder and double-click **FileManager_Uninstall.bat**
 
-**Windows**
-
-Open the windows folder from the downloaded ZIP and double-click **FileManager_Uninstall.bat**
-
-Your sorted files and folders are never touched. Only the app itself is removed.
+Your sorted files and folders are never touched. Only the app is removed.
 
 ---
 
@@ -213,14 +172,14 @@ Your sorted files and folders are never touched. Only the app itself is removed.
 
     file-manager/
     ├── mac/
-    │   ├── FileManager_Setup.command       ← run this to install on Mac
-    │   ├── FileManager.command             ← Mac launcher (fallback)
-    │   └── FileManager_Uninstall.command   ← removes app from Mac
+    │   ├── FileManager_Setup.command       ← install on Mac
+    │   ├── FileManager.command             ← Mac launcher
+    │   └── FileManager_Uninstall.command   ← remove from Mac
     ├── windows/
-    │   ├── FileManager_Setup.bat           ← run this to install on Windows
-    │   └── FileManager_Uninstall.bat       ← removes app from Windows
-    ├── file_manager.py                     ← core logic (shared Mac + Windows)
-    ├── file_manager_ui.py                  ← desktop UI (shared Mac + Windows)
+    │   ├── FileManager_Setup.bat           ← install on Windows
+    │   └── FileManager_Uninstall.bat       ← remove from Windows
+    ├── file_manager.py                     ← core logic (shared)
+    ├── file_manager_ui.py                  ← desktop UI (shared)
     ├── README.md
     ├── LICENSE
     └── .gitignore
@@ -233,59 +192,52 @@ Your sorted files and folders are never touched. Only the app itself is removed.
 
 | Problem | Solution |
 |---------|----------|
-| macOS blocks the file | Right-click then Open then Open |
-| App does not open | Run: python3 Desktop/FileSorter/file_manager_ui.py |
-| Port already in use | Run: pkill -9 -f file_manager_ui.py |
-| Compression not working | Run: pip3 install Pillow |
+| macOS blocks the file | Right-click, then Open, then Open |
+| App does not open | Run the installer again — it reinstalls PyWebView |
+| PyWebView fails to install | Run `xcode-select --install`, then the installer again |
+| Port already in use | Run: `pkill -9 -f file_manager_ui.py` |
+| Compression not working | Run: `pip3 install Pillow` |
 | Files not sorted | Run Dry Run first to preview |
-| file_manager.py not found | Both .py files must be in Desktop/FileSorter/ |
 
 ### Windows
 
 | Problem | Solution |
 |---------|----------|
-| Windows blocks the file | Click More info then Run anyway |
+| Windows blocks the file | Click More info, then Run anyway |
 | python is not recognized | Reinstall Python and tick Add Python to PATH |
-| App does not open | Run FileManager.bat from Command Prompt to see error |
+| App does not open | Run FileManager.bat from Command Prompt to see the error |
+| PyWebView not working | Run: `pip install pywebview` |
+| Compression not working | Run: `pip install Pillow` |
 | Port already in use | Restart your PC and try again |
-| Compression not working | Open Command Prompt and run: pip install Pillow |
-| PyWebView not working | Open Command Prompt and run: pip install pywebview |
-| Installer closes immediately | Run it from Command Prompt to see the error |
-| Already installed message | Choose option 1 to Launch or 2 to Reinstall |
+| Already installed message | Choose 1 to Launch or 2 to Reinstall |
 
 ---
 
 ## 🗺️ Roadmap
 
-- [x] macOS support
-- [x] Windows support
-- [x] Desktop window via PyWebView (no browser needed)
+- [x] macOS and Windows support
+- [x] Desktop window via PyWebView
+- [x] Apple-style frosted glass UI
 - [x] Dry Run mode
 - [x] Custom folders with persistent memory
-- [x] Fuzzy matching plural-aware 90% similarity
-- [x] Auto dimension detection from image metadata
-- [x] Sub-sort confirmation before executing
-- [x] One-click installers for Mac and Windows
-- [x] Uninstallers for Mac and Windows
+- [x] Fuzzy, plural-aware matching
+- [x] Dimension detection from image metadata
+- [x] Installers and uninstallers for Mac and Windows
 - [ ] Video file support
 - [ ] Batch rename files
 - [ ] Export sort report as CSV or PDF
-- [ ] Scheduled auto-sort
 
 ---
 
 ## 📄 License
 
-MIT License — free to use, modify and distribute.
-See [LICENSE](LICENSE) for full details.
+MIT License — free to use, modify and distribute. See [LICENSE](LICENSE).
 
 ---
 
 ## 👤 Author
 
-Made by **Shahir Zambri**
-
-GitHub: [@shahirzambri](https://github.com/shahirzambri)
+Made by **Shahir Zambri** — [@shahirzambri](https://github.com/shahirzambri)
 
 ---
 
@@ -295,4 +247,3 @@ GitHub: [@shahirzambri](https://github.com/shahirzambri)
 - [Pillow](https://python-pillow.org) — image compression
 - [PyWebView](https://pywebview.flowrl.com) — desktop window
 - HTML, CSS, JavaScript — UI
-- No heavy frameworks — lightweight and fast
