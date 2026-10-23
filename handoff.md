@@ -10,46 +10,69 @@ Local:  ~/Desktop/FileSorter/
 
 ## Pipeline
 1. Auto-create folders (only when matching files exist)
-2. Sort files: keyword, alias (GDB, MAN), case-insensitive, plural-aware,
-   90% fuzzy match
+2. Sort files: built-in aliases (GDB, MAN), built-in folders (fuzzy,
+   plural-aware, 90%), then saved identifiers (whole-section match only)
 3. Sub-sort by dimension (UI toggle). Runs only if 2+ different sizes exist
    in a folder. Falls back to image metadata if the filename has no size.
 4. Compress JPG/WebP/GIF to KB limits. PNG untouched. Dimensions never change.
+5. Smart Sort panel for unrecognized files (see below)
 - Dry Run previews without changing anything.
-- Unmatched files show a "custom folder" panel. Custom folders save to
-  custom_config.json (gitignored) and are fuzzy-checked before creation.
+
+## Smart Sort (unrecognized files)
+- Splits filenames on "_" (or "-" if there are no underscores). Ignores
+  dimensions, noise words (v1, FINAL, copy, NEW...) and bracketed text.
+- Identifier = the section that varies most. 2-letter country codes skipped.
+  Single files are compared with recognized files from the same batch.
+  Files that differ only by dimension get a "Low confidence" flag.
+- Panel shows one row per identifier: checkbox, editable name, "Map to"
+  existing folder, optional Max KB. Buttons: Accept All, Confirm, Skip All.
+  An "Identifier section" dropdown lets the user pick another section.
+- Live run: Confirm creates folders, moves files, saves identifiers, then
+  sub-sorts and compresses only the new folders.
+- Dry Run: Accept All / Confirm asks first, saves the identifiers, turns
+  Dry Run OFF and runs everything live (endpoint /save-and-run).
+- Skip / untick = skipped for this run only; nothing is saved.
+- Manual "Create & Sort" folder input stays below the panel as a fallback.
+
+## Saved Config (custom_config.json, gitignored)
+    {"folders": [...], "size_rules": {...}, "aliases": {"META": "FB IG"}}
+Saved names match whole sections only (LINE never matches ONLINE).
+Folder names are UPPERCASE, underscores turned into spaces.
 
 ## Repo Structure
     mac/      FileManager_Setup.command, FileManager.command, FileManager_Uninstall.command
     windows/  FileManager_Setup.bat, FileManager_Uninstall.bat
-    file_manager.py      core logic (shared)
+    file_manager.py      core logic + Smart Sort (shared)
     file_manager_ui.py   PyWebView window + local HTTP server on port 8765 (shared)
     README.md, LICENSE, .gitignore
 
-## Key Settings (file_manager.py)
-FOLDERS, ALIASES, SIZE_RULES (KB), SIMILARITY_THRESHOLD = 0.90
+## Key Functions
+- file_manager.py: run_all, detect_identifiers, apply_identifiers,
+  save_identifiers, create_custom_folder, find_target_folder, section_match
+- file_manager_ui.py endpoints: /run, /poll, /browse, /skipped, /detect,
+  /check-folder, /add-folder, /apply-identifiers, /save-and-run
 
-## Current State
-- UI redesigned in Apple frosted-glass style (done).
-- Run button: blue when Dry Run ON, red when OFF. Must stay this way.
-- Windows installer installs Python (if missing), Pillow and PyWebView,
-  and creates FileManager.bat on the Desktop.
+## Key Settings (file_manager.py)
+FOLDERS, ALIASES, SIZE_RULES (KB), SIMILARITY_THRESHOLD = 0.90, NOISE_WORDS
+
+## Rules to Keep
+- UI: Apple frosted-glass style. Run button blue when Dry Run ON, red when OFF.
+- Dry Run never changes files unless the user confirms leaving it.
+- Do not reintroduce .app builds (no admin rights, Gatekeeper blocks them).
 
 ## Environment Notes
 - Mac: Python 3.9 (/usr/bin/python3), user is NOT an admin (no sudo).
-  pywebview 6.2.1 installed.
-- .app bundles failed (Gatekeeper, no admin). Mac launcher is
-  FileManager.command on the Desktop. Do not reintroduce .app builds.
+  pywebview 6.2.1 installed. Launcher: FileManager.command on the Desktop.
 - Windows .bat files: avoid labels inside if-blocks, avoid `|` in
   echo-generated launchers, avoid inline multi-line Python.
-- User prefers full-file rewrites to copy-paste, step-by-step instructions.
+- User prefers full-file rewrites or one-paste patch scripts, with
+  step-by-step Terminal instructions.
 - Push: git add . && git commit -m "..." && git push
 
 ## Known Issues
-- mac/FileManager_Setup.command references build_app.py (deleted). Needs a
-  rewrite to install Pillow + pywebview and create FileManager.command.
-- README says Mac installs "FileManager.app". Should say FileManager.command.
+- Cosmetic: in the Smart Sort panel, the Max KB box wraps onto its own line
+  under each row. Should fit on one line.
+- Smart Sort has only been tested on a few real batches so far.
 
 ## Next Task
-Fix mac/FileManager_Setup.command (see Known Issues), then update README
-to match.
+(Write your next idea here before starting a new session.)
