@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """
 File Manager — Core Logic
-Works on both macOS and Windows.
+Works on macOS and Windows.
+
+STEP 1  Create folders   (only when matching files exist)
+STEP 2  Sort files       (keyword, alias, fuzzy, plural-aware)
+STEP 3  Sub-sort         (by dimensions, optional)
+STEP 4  Compress         (JPG/WebP/GIF to KB limits, PNG kept as-is)
+
+SMART SORT: detects identifiers in unrecognized filenames and
+suggests them as folder names. The user confirms first.
 """
 
 import re
 import shutil
-import sys
 import json
 from pathlib import Path
 from io import BytesIO
 from difflib import SequenceMatcher
+from collections import Counter
 
 try:
     from PIL import Image
@@ -20,7 +28,7 @@ except ImportError:
 
 
 # ══════════════════════════════════════════════════════════════
-# ✏️  SECTION 1 — FOLDER NAMES
+# SECTION 1 — FOLDER NAMES
 # ══════════════════════════════════════════════════════════════
 FOLDERS = [
     "CAROUSELL HP BILLBOARD",
@@ -51,57 +59,72 @@ FOLDERS = [
 ]
 
 # ══════════════════════════════════════════════════════════════
-# ✏️  SECTION 2 — ALIASES
+# SECTION 2 — ALIASES
 # ══════════════════════════════════════════════════════════════
 ALIASES = {
-    "GDB" : "GOOGLE DISCOVERY BANNER",
-    "MAN" : "MICROSOFT AUDIENCE NETWORK",
+    "GDB": "GOOGLE DISCOVERY BANNER",
+    "MAN": "MICROSOFT AUDIENCE NETWORK",
 }
 
 # ══════════════════════════════════════════════════════════════
-# ✏️  SECTION 3 — SIZE RULES (KB)
+# SECTION 3 — SIZE RULES (KB)
 # ══════════════════════════════════════════════════════════════
 SIZE_RULES = {
-    "REDDIT IMAGE AD THUMBNAIL"   :  3072,
-    "REDDIT IMAGE AD"             :  3072,
-    "REDDIT CAROUSELL"            :  20480,
-    "REDDIT CAROUSEL"             :  20480,
-    "FOODPANDA IMAGE AD"          :  100,
-    "GOOGLE UAC"                  :  5120,
-    "SHOPBACK"                    :  500,
-    "LEMON8 COVER IMAGE"          :  500,
-    "GRAB BRANDED VEH ICON"       :  450,
-    "GRAB NATIVE IMAGE"           :  250,
-    "GRAB HOME FEED"              :  250,
-    "GRAB REWARD DETAIL PAGE"     :  250,
-    "GOOGLE DISCOVERY BANNER"     :  5120,
-    "CRITEO"                      :  5120,
-    "YT COMP"                     :  100,
-    "XIAO HONG SHU"               :  700,
+    "REDDIT IMAGE AD THUMBNAIL": 3072,
+    "REDDIT IMAGE AD":           3072,
+    "REDDIT CAROUSELL":          20480,
+    "REDDIT CAROUSEL":           20480,
+    "FOODPANDA IMAGE AD":        100,
+    "GOOGLE UAC":                5120,
+    "SHOPBACK":                  500,
+    "LEMON8 COVER IMAGE":        500,
+    "GRAB BRANDED VEH ICON":     450,
+    "GRAB NATIVE IMAGE":         250,
+    "GRAB HOME FEED":            250,
+    "GRAB REWARD DETAIL PAGE":   250,
+    "GOOGLE DISCOVERY BANNER":   5120,
+    "CRITEO":                    5120,
+    "YT COMP":                   100,
+    "XIAO HONG SHU":             700,
 }
 
 # ══════════════════════════════════════════════════════════════
-# 🔧 SETTINGS
+# SETTINGS
 # ══════════════════════════════════════════════════════════════
 SIMILARITY_THRESHOLD = 0.90
 CUSTOM_CONFIG_PATH   = Path(__file__).parent / "custom_config.json"
 NUMBER_PATTERNS      = [r"\d+x\d+", r"\d+p\b", r"\d{3,}"]
 SUPPORTED_FORMATS    = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-COMPRESSIBLE_FORMATS = {".jpg", ".jpeg", ".webp", ".gif"}
 
-_last_skipped = []
-_last_source  = None
+# Smart Sort: ignored when comparing filenames
+NOISE_WORDS  = {"FINAL", "COPY", "NEW", "DRAFT", "EDIT",
+                "REVISED", "UPDATED", "LATEST"}
+DIMENSION_RE = re.compile(r"^\d{2,5}\s*[xX×]\s*\d{2,5}$")
+COUNTRY_RE   = re.compile(r"^[A-Z]{2}$")
+
+_last_skipped    = []
+_last_recognized = []
+_last_source     = None
+_last_dry        = True
 
 
 # ──────────────────────────────────────────────────────────────
-#  FUZZY MATCHING
+#  TEXT HELPERS
 # ──────────────────────────────────────────────────────────────
 
-def normalize(text):
-    text = re.sub(r"\.[^.]+$", "", text)
+def strip_ext(name):
+    """Remove a real file extension only (.jpg, .png ...), not '.11 Sale'."""
+    return re.sub(r"\.[A-Za-z0-9]{1,5}$", "", name)
+
+
+def clean_text(text):
     text = re.sub(r"[_\-]+", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.upper().strip()
+
+
+def normalize(text):
+    return clean_text(strip_ext(text))
 
 
 def strip_plural_s(text):
@@ -111,6 +134,17 @@ def strip_plural_s(text):
     )
 
 
+def section_key(text):
+    """Comparison key: uppercase, plural-stripped."""
+    return strip_plural_s(clean_text(text))
+
+
+def format_folder_name(name):
+    """UPPERCASE, underscores to spaces, no illegal path characters."""
+    n = re.sub(r'[\\/:*?"<>|]', " ", str(name)).replace("_", " ")
+    return re.sub(r"\s+", " ", n).strip().upper()
+
+
 def similarity_score(a, b):
     if not a or not b:
         return 0.0
@@ -118,6 +152,7 @@ def similarity_score(a, b):
 
 
 def fuzzy_match(fname_norm, folder_norm):
+    """Used for the built-in folder list."""
     if folder_norm in fname_norm:
         return True
     fs = strip_plural_s(fname_norm)
@@ -136,8 +171,8 @@ def fuzzy_match(fname_norm, folder_norm):
 
 
 def folders_similar(a, b):
-    a,  b  = normalize(a),          normalize(b)
-    as_, bs = strip_plural_s(a),    strip_plural_s(b)
+    a, b    = normalize(a), normalize(b)
+    as_, bs = strip_plural_s(a), strip_plural_s(b)
     if a == b or as_ == bs:
         return True
     return max([
@@ -149,17 +184,86 @@ def folders_similar(a, b):
 
 
 # ──────────────────────────────────────────────────────────────
+#  SECTION HELPERS (Smart Sort)
+# ──────────────────────────────────────────────────────────────
+
+def is_noise_word(word):
+    u = word.upper()
+    return (bool(DIMENSION_RE.match(u))
+            or bool(re.match(r"^\d{3,4}P$", u))
+            or bool(re.match(r"^V\d+$", u))
+            or u in NOISE_WORDS)
+
+
+def split_sections(filename):
+    """
+    Split on '_' (or '-' if there are no underscores).
+    Drops dimensions, noise words and bracketed text.
+    'FW26 11.11 Sale_Paid Digital_SG_RAKUTEN_1200x1200.jpg'
+      -> ['FW26 11.11 Sale', 'Paid Digital', 'SG', 'RAKUTEN']
+    """
+    stem = strip_ext(filename)
+    if "_" in stem:
+        parts = stem.split("_")
+    elif "-" in stem:
+        parts = stem.split("-")
+    else:
+        parts = [stem]
+    out = []
+    for p in parts:
+        p = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", p)
+        words = [w for w in p.split() if not is_noise_word(w)]
+        s = " ".join(words).strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def has_dimension(filename):
+    return bool(re.search(r"\d{2,5}\s*[xX×]\s*\d{2,5}", strip_ext(filename)))
+
+
+def section_match(filename, name):
+    """
+    Whole-section match for saved identifiers.
+    'LINE' matches '..._LINE_...' but never '..._ONLINE_...'.
+    """
+    target = section_key(name)
+    if not target:
+        return False
+    for s in split_sections(filename):
+        if section_key(s) == target:
+            return True
+    if " " in target:
+        full = strip_plural_s(normalize(filename))
+        pattern = r"(?<![A-Z0-9])" + re.escape(target) + r"(?![A-Z0-9])"
+        if re.search(pattern, full):
+            return True
+    return False
+
+
+# ──────────────────────────────────────────────────────────────
 #  CUSTOM CONFIG
 # ──────────────────────────────────────────────────────────────
 
 def load_custom_config():
+    data = {"folders": [], "size_rules": {}, "aliases": {}}
     try:
         if CUSTOM_CONFIG_PATH.exists():
             with open(CUSTOM_CONFIG_PATH, "r") as f:
-                return json.load(f)
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                for k in data:
+                    if k in loaded:
+                        data[k] = loaded[k]
     except Exception:
         pass
-    return {"folders": [], "size_rules": {}}
+    return data
+
+
+def _write_config(config):
+    with open(CUSTOM_CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2)
 
 
 def save_to_custom_config(folder_name, max_kb=None):
@@ -168,23 +272,26 @@ def save_to_custom_config(folder_name, max_kb=None):
         config["folders"].append(folder_name)
     if max_kb and max_kb > 0:
         config["size_rules"][folder_name] = max_kb
-    with open(CUSTOM_CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
+    _write_config(config)
 
 
-def get_effective_folders():
-    config   = load_custom_config()
+def save_alias(identifier, target):
+    config = load_custom_config()
+    config["aliases"][identifier] = target
+    _write_config(config)
+
+
+def get_all_folders():
     combined = list(FOLDERS)
-    for f in config.get("folders", []):
+    for f in load_custom_config()["folders"]:
         if f not in combined:
             combined.append(f)
     return combined
 
 
 def get_effective_size_rules():
-    config   = load_custom_config()
     combined = dict(SIZE_RULES)
-    combined.update(config.get("size_rules", {}))
+    combined.update(load_custom_config()["size_rules"])
     return combined
 
 
@@ -197,17 +304,20 @@ def check_folder_exists(folder_name):
         if folders_similar(folder_name, f):
             return {"exists": True, "source": "builtin", "matched": f}
     for alias, folder in ALIASES.items():
-        if folders_similar(folder_name, alias) or \
-           folders_similar(folder_name, folder):
+        if folders_similar(folder_name, alias) or folders_similar(folder_name, folder):
             return {"exists": True, "source": "builtin", "matched": folder}
-    for f in load_custom_config().get("folders", []):
+    config = load_custom_config()
+    for f in config["folders"]:
         if folders_similar(folder_name, f):
             return {"exists": True, "source": "custom", "matched": f}
+    for ident, target in config["aliases"].items():
+        if folders_similar(folder_name, ident):
+            return {"exists": True, "source": "custom", "matched": target}
     return {"exists": False, "source": "none", "matched": ""}
 
 
 # ──────────────────────────────────────────────────────────────
-#  HELPERS
+#  GENERAL HELPERS
 # ──────────────────────────────────────────────────────────────
 
 def get_size_kb(path):
@@ -215,8 +325,19 @@ def get_size_kb(path):
 
 
 def format_kb(kb):
-    return (f"{kb/1024:.2f} MB ({kb:.0f} KB)"
-            if kb >= 1024 else f"{kb:.1f} KB")
+    return f"{kb/1024:.2f} MB ({kb:.0f} KB)" if kb >= 1024 else f"{kb:.1f} KB"
+
+
+def _limit_text(kb):
+    return f"{kb/1024:.0f} MB" if kb >= 1024 else f"{kb} KB"
+
+
+def _to_kb(value):
+    try:
+        n = int(str(value).strip())
+        return n if n > 0 else None
+    except (TypeError, ValueError):
+        return None
 
 
 def resolve_conflict(dest):
@@ -244,17 +365,32 @@ def print_header(title):
 
 def find_target_folder(filename):
     name_norm = normalize(filename)
+
+    # 1. Built-in aliases (GDB, MAN)
     for alias, folder in ALIASES.items():
         if re.search(r"\b" + re.escape(alias) + r"\b", name_norm):
             return folder
-    for folder in sorted(get_effective_folders(), key=len, reverse=True):
+
+    # 2. Built-in folders (fuzzy, longest first)
+    for folder in sorted(FOLDERS, key=len, reverse=True):
         if fuzzy_match(name_norm, normalize(folder)):
             return folder
+
+    # 3. Saved identifiers (whole-section match only)
+    config = load_custom_config()
+    for ident, target in sorted(config["aliases"].items(),
+                                key=lambda x: len(x[0]), reverse=True):
+        if section_match(filename, ident):
+            return target
+    for folder in sorted(config["folders"], key=len, reverse=True):
+        if section_match(filename, folder):
+            return folder
+
     return None
 
 
 def run_sort(source, dry_run):
-    global _last_skipped, _last_source
+    global _last_skipped, _last_source, _last_recognized
 
     files = sorted([
         f for f in source.iterdir()
@@ -263,6 +399,7 @@ def run_sort(source, dry_run):
 
     if not files:
         print("  No files found.")
+        _last_skipped, _last_recognized, _last_source = [], [], source
         return {"moved": [], "skipped": []}
 
     file_folder_map = {}
@@ -273,124 +410,327 @@ def run_sort(source, dry_run):
             file_folder_map[file.name] = t
             needed_folders.add(t)
 
-    # Step 1 — Create folders
     print_header("STEP 1 -- Auto-Create Folders")
     print(f"  Files scanned : {len(files)}")
     print(f"  Folders needed: {len(needed_folders)}\n")
-
     for folder in sorted(needed_folders):
-        fp  = source / folder
-        tag = "[DRY RUN]" if dry_run else "Created  "
+        fp = source / folder
         if not fp.exists():
-            print(f"  {tag} | {folder}/")
+            print(f"  {'[DRY RUN]' if dry_run else 'Created  '} | {folder}/")
             if not dry_run:
                 fp.mkdir(parents=True, exist_ok=True)
         else:
-            print(f"  Exists   | {folder}/")
+            print(f"  Exists    | {folder}/")
 
-    # Step 2 — Move files
     print_header("STEP 2 -- Sort Files into Folders")
     print(f"  Files    : {len(files)}")
     print(f"  Matching : case-insensitive, plural-aware, "
           f"{int(SIMILARITY_THRESHOLD*100)}% fuzzy\n")
 
     results = {"moved": [], "skipped": []}
-
     for file in files:
         tf = file_folder_map.get(file.name)
         if tf:
             dest = resolve_conflict(source / tf / file.name)
-            tag  = "[DRY RUN]" if dry_run else "Moved    "
-            print(f"  {tag} | {file.name}")
-            print(f"           | -> {tf}/\n")
+            print(f"  {'[DRY RUN]' if dry_run else 'Moved    '} | {file.name}")
+            print(f"            | -> {tf}/\n")
             if not dry_run:
                 shutil.move(str(file), str(dest))
             results["moved"].append({"file": file.name, "folder": tf})
         else:
-            print(f"  No Match | {file.name}\n")
+            print(f"  No Match  | {file.name}\n")
             results["skipped"].append(file.name)
 
-    _last_skipped = list(results["skipped"])
-    _last_source  = source
+    _last_skipped    = list(results["skipped"])
+    _last_recognized = [e["file"] for e in results["moved"]]
+    _last_source     = source
 
     print_divider()
     print(f"  Moved   : {len(results['moved'])} file(s)")
     print(f"  Skipped : {len(results['skipped'])} file(s)")
-    if results["skipped"]:
-        print("\n  Unmatched:")
-        for f in results["skipped"]:
-            print(f"    - {f}")
     print(f"{'='*67}\n")
-
     return results
 
 
 # ──────────────────────────────────────────────────────────────
-#  CUSTOM FOLDER
+#  SMART SORT — Detect identifiers
 # ──────────────────────────────────────────────────────────────
 
-def create_custom_folder(folder_name, max_kb=None, dry_run=False):
-    global _last_skipped, _last_source
+def _varying_positions(all_secs, length):
+    """Positions whose values differ between files (country codes skipped)."""
+    out = []
+    for i in range(length):
+        vals = [s[i] for s in all_secs]
+        distinct = len({section_key(v) for v in vals})
+        if distinct <= 1:
+            continue
+        if all(COUNTRY_RE.match(clean_text(v)) for v in vals):
+            continue
+        out.append((distinct, i))
+    return out
 
-    if not _last_source or not Path(_last_source).exists():
-        return {"error": "No source directory. Run sort first."}
 
-    source    = Path(_last_source)
-    name_norm = normalize(folder_name)
-    matched   = []
-    still     = []
-
-    for fname in _last_skipped:
-        if fuzzy_match(normalize(fname), name_norm):
-            matched.append(fname)
+def _build_pattern(sample, idx, varying, dims):
+    parts = []
+    for j, s in enumerate(sample):
+        if j == idx:
+            parts.append("[IDENTIFIER]")
+        elif j in varying:
+            parts.append("[VARIES]")
         else:
-            still.append(fname)
+            parts.append(s)
+    if dims:
+        parts.append("[DIMENSIONS]")
+    return "_".join(parts)
 
-    if not matched:
-        return {
-            "error"        : f"No unmatched files contain '{folder_name}'",
-            "still_skipped": still
-        }
 
-    if not dry_run:
-        save_to_custom_config(folder_name, max_kb)
+def _suggest_folder(name):
+    key = section_key(name)
+    for alias, folder in ALIASES.items():
+        if section_key(alias) == key:
+            return folder
+    for ident, target in load_custom_config()["aliases"].items():
+        if section_key(ident) == key:
+            return target
+    for f in get_all_folders():
+        if folders_similar(name, f):
+            return f
+    return ""
 
-    fp    = source / folder_name
-    moved = []
 
-    print_header(f"Custom Folder -- {folder_name}/")
-    if max_kb:
-        lim = f"{max_kb/1024:.0f} MB" if max_kb >= 1024 else f"{max_kb} KB"
-        print(f"  Max size : {lim}")
-    else:
-        print(f"  Max size : No limit")
-    print(f"  Matched  : {len(matched)}\n")
+def _build_rows(items, idx):
+    """One row per identifier. Case/plural variants merge into one row."""
+    buckets, order = {}, []
+    for f, secs in items:
+        val = secs[idx]
+        k = section_key(val)
+        if k not in buckets:
+            buckets[k] = {"variants": Counter(), "files": []}
+            order.append(k)
+        buckets[k]["variants"][format_folder_name(val)] += 1
+        buckets[k]["files"].append(f)
+    rows = []
+    for k in order:
+        b = buckets[k]
+        name = min(b["variants"], key=lambda v: (len(v), v))
+        rows.append({
+            "name":    name,
+            "files":   b["files"],
+            "suggest": _suggest_folder(name),
+            "short":   len(re.sub(r"[^A-Z0-9]", "", name)) < 3,
+        })
+    return rows
 
-    if not dry_run:
-        fp.mkdir(parents=True, exist_ok=True)
-        for fname in matched:
-            src = source / fname
-            if src.exists():
-                dest = resolve_conflict(fp / fname)
-                shutil.move(str(src), str(dest))
-                moved.append(fname)
-                print(f"  Moved : {fname}")
-        _last_skipped = still
-        print(f"\n  Saved -- {folder_name} remembered for future runs!")
 
-    print_divider()
-    print(f"  Moved         : {len(moved if not dry_run else matched)}")
-    print(f"  Still skipped : {len(still)}")
-    print(f"{'='*67}\n")
+def detect_identifiers():
+    undetected = []
+
+    # Group by number of sections
+    by_len = {}
+    for f in _last_skipped:
+        secs = split_sections(f)
+        if secs:
+            by_len.setdefault(len(secs), []).append((f, secs))
+        else:
+            undetected.append(f)
+
+    # Split into campaigns only when the prefix AND another section differ
+    groups = []
+    for length, items in by_len.items():
+        vidx = {i for _, i in _varying_positions([s for _, s in items], length)}
+        if 0 in vidx and len(vidx) >= 2:
+            split = {}
+            for it in items:
+                split.setdefault(section_key(it[1][0]), []).append(it)
+            groups.extend(split.values())
+        else:
+            groups.append(items)
+
+    # Recognized files give extra context
+    context = [s for s in (split_sections(f) for f in _last_recognized) if s]
+
+    result = []
+    for items in groups:
+        length     = len(items[0][1])
+        first_key  = section_key(items[0][1][0])
+        same_first = all(section_key(s[0]) == first_key for _, s in items)
+        ctx = [s for s in context
+               if len(s) == length
+               and (not same_first or section_key(s[0]) == first_key)]
+        all_secs = [s for _, s in items] + ctx
+
+        if length == 1:
+            varying, chosen, low = set(), 0, False
+        elif len(all_secs) < 2:
+            undetected.extend(f for f, _ in items)
+            continue
+        else:
+            vp = _varying_positions(all_secs, length)
+            varying = {i for _, i in vp}
+            if vp:
+                chosen, low = max(vp)[1], False
+            else:
+                chosen, low = length - 1, True   # differ only by dimension
+
+        dims   = any(has_dimension(f) for f, _ in items)
+        sample = items[0][1]
+        positions = [{
+            "index":   i,
+            "label":   f"Section {i + 1}: {sample[i]}",
+            "pattern": _build_pattern(sample, i, varying, dims),
+            "rows":    _build_rows(items, i),
+        } for i in range(length)]
+
+        result.append({
+            "id":             len(result),
+            "chosen":         chosen,
+            "low_confidence": low,
+            "file_count":     len(items),
+            "positions":      positions,
+        })
 
     return {
-        "moved"          : len(moved if not dry_run else matched),
-        "files"          : moved if not dry_run else matched,
-        "folder"         : folder_name,
-        "max_kb"         : max_kb,
-        "still_skipped"  : still,
-        "saved_to_config": not dry_run,
+        "dry":        _last_dry,
+        "groups":     result,
+        "undetected": undetected,
+        "folders":    get_all_folders(),
     }
+
+
+def apply_identifiers(items, subsort=True):
+    """
+    items: [{name, map_to, max_kb, files}]
+    Creates folders, moves files, saves identifiers/aliases,
+    then sub-sorts and compresses only the newly sorted files.
+    """
+    global _last_skipped
+
+    if not _last_source or not Path(_last_source).exists():
+        print("\n  Error: No source folder. Run File Manager first.\n")
+        return {"error": "No source folder"}
+    if _last_dry:
+        print("\n  Dry Run is ON -- nothing was applied.\n")
+        return {"error": "Dry run"}
+
+    source  = Path(_last_source)
+    pending = set(_last_skipped)
+    entries, final_names, targets = [], set(), set()
+
+    print_header("SMART SORT -- Applying Detected Identifiers")
+
+    for item in items:
+        ident  = format_folder_name(item.get("name", ""))
+        map_to = (item.get("map_to") or "").strip()
+        max_kb = _to_kb(item.get("max_kb"))
+        files  = [f for f in item.get("files", []) if f in pending]
+        if not files or (not ident and not map_to):
+            continue
+
+        target = map_to or ident
+        fp = source / target
+        fp.mkdir(parents=True, exist_ok=True)
+        print(f"\n  {target}/  ({len(files)} file(s))")
+
+        for f in files:
+            src = source / f
+            if not src.exists():
+                continue
+            dest = resolve_conflict(fp / f)
+            shutil.move(str(src), str(dest))
+            pending.discard(f)
+            entries.append({"file": dest.name, "folder": target})
+            final_names.add(dest.name)
+            targets.add(target)
+            print(f"    Moved | {f}")
+
+        if map_to:
+            if ident and section_key(ident) != section_key(map_to):
+                save_alias(ident, map_to)
+                print(f"    Saved alias: {ident} -> {map_to}")
+        else:
+            save_to_custom_config(ident, max_kb)
+            limit = _limit_text(max_kb) if max_kb else "no limit"
+            print(f"    Saved folder: {ident} ({limit})")
+
+    _last_skipped = [f for f in _last_skipped if f in pending]
+
+    if entries:
+        if subsort:
+            run_subsort(source, entries, False)
+        if PIL_AVAILABLE:
+            run_reducer(source, False, only_folders=targets, only_names=final_names)
+
+    print_divider()
+    print(f"  Sorted        : {len(entries)} file(s)")
+    print(f"  Still unsorted: {len(_last_skipped)} file(s)")
+    print(f"{'='*67}\n")
+    return {"moved": len(entries), "still_skipped": list(_last_skipped)}
+
+
+# ──────────────────────────────────────────────────────────────
+#  CUSTOM FOLDER (manual fallback)
+# ──────────────────────────────────────────────────────────────
+
+def create_custom_folder(folder_name, max_kb=None, dry_run=None, subsort=True):
+    global _last_skipped
+
+    if dry_run is None:
+        dry_run = _last_dry
+    if not _last_source or not Path(_last_source).exists():
+        return {"error": "No source folder. Run File Manager first."}
+
+    source      = Path(_last_source)
+    folder_name = format_folder_name(folder_name)
+    max_kb      = _to_kb(max_kb)
+    if not folder_name:
+        return {"error": "Folder name is empty."}
+
+    name_norm = normalize(folder_name)
+    matched, still = [], []
+    for fname in _last_skipped:
+        (matched if fuzzy_match(normalize(fname), name_norm) else still).append(fname)
+
+    if not matched:
+        return {"error": f"No unsorted files contain '{folder_name}'",
+                "still_skipped": still}
+
+    print_header(f"Custom Folder -- {folder_name}/")
+    print(f"  Max size : {_limit_text(max_kb) if max_kb else 'No limit'}")
+    print(f"  Matched  : {len(matched)}\n")
+
+    if dry_run:
+        for f in matched:
+            print(f"  [DRY RUN] | {f} -> {folder_name}/")
+        print("\n  Dry Run is ON -- nothing was moved or saved.")
+        print(f"{'='*67}\n")
+        return {"moved": 0, "files": matched, "folder": folder_name, "dry_run": True}
+
+    save_to_custom_config(folder_name, max_kb)
+    fp = source / folder_name
+    fp.mkdir(parents=True, exist_ok=True)
+
+    entries, names = [], set()
+    for f in matched:
+        src = source / f
+        if src.exists():
+            dest = resolve_conflict(fp / f)
+            shutil.move(str(src), str(dest))
+            entries.append({"file": dest.name, "folder": folder_name})
+            names.add(dest.name)
+            print(f"  Moved     | {f}")
+
+    _last_skipped = still
+    print(f"\n  Saved -- {folder_name} will be remembered for future runs.")
+    print(f"{'='*67}\n")
+
+    if entries:
+        if subsort:
+            run_subsort(source, entries, False)
+        if PIL_AVAILABLE:
+            run_reducer(source, False, only_folders={folder_name}, only_names=names)
+
+    return {"moved": len(entries), "files": [e["file"] for e in entries],
+            "folder": folder_name, "max_kb": max_kb, "still_skipped": still}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -398,17 +738,16 @@ def create_custom_folder(folder_name, max_kb=None, dry_run=False):
 # ──────────────────────────────────────────────────────────────
 
 def extract_number_pattern(filename, file_path=None):
-    nc = re.sub(r"\.[^.]+$", "", filename)
+    nc = strip_ext(filename)
     for p in NUMBER_PATTERNS:
         m = re.search(p, nc, re.IGNORECASE)
         if m:
             return m.group()
     if file_path and PIL_AVAILABLE:
         try:
-            ext = Path(file_path).suffix.lower()
-            if ext in SUPPORTED_FORMATS:
-                img      = Image.open(file_path)
-                w, h     = img.size
+            if Path(file_path).suffix.lower() in SUPPORTED_FORMATS:
+                img  = Image.open(file_path)
+                w, h = img.size
                 img.close()
                 return f"{w}x{h}"
         except Exception:
@@ -429,7 +768,6 @@ def run_subsort(source, moved_files, dry_run):
     print("  Rule: Only sub-sorts if 2+ different patterns exist\n")
 
     tm = ts = tn = 0
-
     for fn, fnames in sorted(fm.items()):
         fp = source / fn
         print(f"  {fn}/  --  {len(fnames)} file(s)")
@@ -439,24 +777,20 @@ def run_subsort(source, moved_files, dry_run):
         up = set(p for p in pm.values() if p)
 
         if len(up) <= 1:
-            r = ("no pattern" if not up
-                 else f"only 1 pattern '{next(iter(up))}'")
+            r = "no pattern" if not up else f"only 1 pattern '{next(iter(up))}'"
             print(f"  Skipped -- {r}")
             print(f"  {len(fnames)} file(s) stay in {fn}/\n")
             ts += len(fnames)
             continue
 
-        print(f"  {len(up)} patterns ({', '.join(sorted(up))}) "
-              f"-> sub-sorting\n")
-
+        print(f"  {len(up)} patterns ({', '.join(sorted(up))}) -> sub-sorting\n")
         for f in fnames:
             p = pm[f]
             if p:
                 sf   = fp / p
                 dest = resolve_conflict(sf / f)
-                tag  = "[DRY RUN]" if dry_run else "Moved    "
-                print(f"  {tag} | {f}")
-                print(f"           | -> {fn}/{p}/\n")
+                print(f"  {'[DRY RUN]' if dry_run else 'Moved    '} | {f}")
+                print(f"            | -> {fn}/{p}/\n")
                 if not dry_run:
                     sf.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(fp / f), str(dest))
@@ -477,29 +811,34 @@ def run_subsort(source, moved_files, dry_run):
 # ──────────────────────────────────────────────────────────────
 
 def find_size_rule(file_path, source):
-    sr = sorted(
-        get_effective_size_rules().items(),
-        key=lambda x: len(x[0]), reverse=True
-    )
-    nn = normalize(file_path.name)
+    all_rules = get_effective_size_rules()
 
-    for kw, mb in sr:
+    # 1. The folder the file sits in (exact match, most reliable)
+    try:
+        parts = file_path.relative_to(source).parts[:-1]
+    except ValueError:
+        parts = ()
+    for part in parts:
+        pk = section_key(part)
+        for kw, mb in all_rules.items():
+            if section_key(kw) == pk:
+                return kw, mb
+
+    # 2. Built-in rules by filename, alias, then parent folder (fuzzy)
+    builtin = sorted(SIZE_RULES.items(), key=lambda x: len(x[0]), reverse=True)
+    nn = normalize(file_path.name)
+    for kw, mb in builtin:
         if fuzzy_match(nn, normalize(kw)):
             return kw, mb
-
     for alias, folder in ALIASES.items():
         if re.search(r"\b" + re.escape(alias) + r"\b", nn):
-            for kw, mb in sr:
+            for kw, mb in builtin:
                 if fuzzy_match(normalize(folder), normalize(kw)):
                     return kw, mb
-
-    try:
-        for part in file_path.relative_to(source).parts[:-1]:
-            for kw, mb in sr:
-                if fuzzy_match(normalize(part), normalize(kw)):
-                    return kw, mb
-    except ValueError:
-        pass
+    for part in parts:
+        for kw, mb in builtin:
+            if fuzzy_match(normalize(part), normalize(kw)):
+                return kw, mb
 
     return None, None
 
@@ -510,10 +849,9 @@ def compress_jpg(img, tkb):
         m   = (lo + hi) // 2
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=m, optimize=True)
-        d   = buf.getvalue()
+        d = buf.getvalue()
         if len(d) / 1024 <= tkb:
-            best = d
-            lo   = m + 1
+            best, lo = d, m + 1
         else:
             hi = m - 1
     if best is None:
@@ -529,10 +867,9 @@ def compress_webp(img, tkb):
         m   = (lo + hi) // 2
         buf = BytesIO()
         img.save(buf, format="WEBP", quality=m)
-        d   = buf.getvalue()
+        d = buf.getvalue()
         if len(d) / 1024 <= tkb:
-            best = d
-            lo   = m + 1
+            best, lo = d, m + 1
         else:
             hi = m - 1
     if best is None:
@@ -551,16 +888,12 @@ def compress_gif(img, tkb):
 def compress_image(fp, tkb):
     ext = fp.suffix.lower()
     okb = get_size_kb(fp)
-
     if ext == ".png":
-        return {"success": False, "png_skip": True,
-                "reason": "PNG kept as-is"}
-
+        return {"success": False, "png_skip": True, "reason": "PNG kept as-is"}
     try:
         img = Image.open(fp)
         img.load()
-        os_ = img.size
-
+        dims = img.size
         if ext in (".jpg", ".jpeg"):
             if img.mode in ("RGBA", "LA", "P"):
                 bg   = Image.new("RGB", img.size, (255, 255, 255))
@@ -571,54 +904,44 @@ def compress_image(fp, tkb):
             elif img.mode != "RGB":
                 img = img.convert("RGB")
             c = compress_jpg(img, tkb)
-
         elif ext == ".webp":
             c = compress_webp(img, tkb)
-
         elif ext == ".gif":
             c = compress_gif(img, tkb)
-
         else:
-            return {"success": False, "png_skip": False,
-                    "reason": f"Unsupported '{ext}'"}
-
+            return {"success": False, "png_skip": False, "reason": f"Unsupported '{ext}'"}
         with open(fp, "wb") as f:
             f.write(c)
-
         nkb = len(c) / 1024
-        return {
-            "success"     : True,
-            "png_skip"    : False,
-            "original_kb" : okb,
-            "new_kb"      : nkb,
-            "saved_pct"   : ((okb - nkb) / okb) * 100,
-            "under_target": nkb <= tkb,
-            "dimensions"  : os_,
-        }
-
+        return {"success": True, "original_kb": okb, "new_kb": nkb,
+                "saved_pct": ((okb - nkb) / okb) * 100 if okb else 0,
+                "under_target": nkb <= tkb, "dimensions": dims}
     except Exception as e:
         return {"success": False, "png_skip": False, "reason": str(e)}
 
 
-def run_reducer(source, dry_run):
-    files = sorted([
-        f for f in source.rglob("*")
-        if f.is_file()
-        and not f.name.startswith(".")
-        and f.suffix.lower() in SUPPORTED_FORMATS
-    ])
+def run_reducer(source, dry_run, only_folders=None, only_names=None):
+    if only_folders:
+        files = []
+        for t in only_folders:
+            folder = source / t
+            if folder.exists():
+                files += [f for f in folder.rglob("*")
+                          if f.is_file() and not f.name.startswith(".")
+                          and f.suffix.lower() in SUPPORTED_FORMATS]
+        if only_names:
+            files = [f for f in files if f.name in only_names]
+        files = sorted(files)
+    else:
+        files = sorted([
+            f for f in source.rglob("*")
+            if f.is_file() and not f.name.startswith(".")
+            and f.suffix.lower() in SUPPORTED_FORMATS
+        ])
 
-    counts = {k: 0 for k in
-              ["compressed", "already_ok", "untouched",
-               "skipped_png", "failed"]}
+    counts = {k: 0 for k in ["compressed", "already_ok", "untouched", "skipped_png", "failed"]}
 
     print_header("STEP 4 -- File Size Reduction  (PNG kept as-is)")
-    print("  Active Rules:")
-    print_divider()
-    for kw, kb in get_effective_size_rules().items():
-        lim = f"{kb/1024:.0f} MB" if kb >= 1024 else f"{kb} KB"
-        print(f"  {kw:<40} -> max {lim}")
-    print_divider()
     print(f"  Files : {len(files)}\n")
 
     for file in files:
@@ -626,45 +949,37 @@ def run_reducer(source, dry_run):
         ckb = get_size_kb(file)
 
         if ext == ".png":
-            print(f"  PNG    | {file.name} -- {format_kb(ckb)}\n")
+            print(f"  PNG      | {file.name} -- {format_kb(ckb)}\n")
             counts["skipped_png"] += 1
             continue
 
         kw, mb = find_size_rule(file, source)
-
         if not kw:
-            print(f"  No Rule| {file.name} -- {format_kb(ckb)}\n")
+            print(f"  No Rule  | {file.name} -- {format_kb(ckb)}\n")
             counts["untouched"] += 1
             continue
 
-        lim = f"{mb/1024:.0f} MB" if mb >= 1024 else f"{mb} KB"
-
+        lim = _limit_text(mb)
         if ckb <= mb:
-            print(f"  OK     | {file.name} -- "
-                  f"{format_kb(ckb)} <= {lim}\n")
+            print(f"  OK       | {file.name} -- {format_kb(ckb)} <= {lim}\n")
             counts["already_ok"] += 1
             continue
 
-        print(f"  Compress| {file.name}")
-        print(f"          | Rule: {kw} -> {lim}")
-        print(f"          | Current: {format_kb(ckb)}")
-
+        print(f"  Compress | {file.name}")
+        print(f"           | Rule: {kw} -> {lim}  |  Current: {format_kb(ckb)}")
         if dry_run:
-            print(f"          | [DRY RUN]\n")
+            print("           | [DRY RUN]\n")
             counts["compressed"] += 1
             continue
 
         r = compress_image(file, mb)
         if r["success"]:
-            w, h = r["dimensions"]
-            s    = ("Target met" if r["under_target"]
-                    else "Best effort")
-            print(f"          | {format_kb(r['original_kb'])} -> "
-                  f"{format_kb(r['new_kb'])} "
-                  f"({r['saved_pct']:.1f}% saved) {s}\n")
+            s = "Target met" if r["under_target"] else "Best effort"
+            print(f"           | {format_kb(r['original_kb'])} -> "
+                  f"{format_kb(r['new_kb'])} ({r['saved_pct']:.1f}% saved) {s}\n")
             counts["compressed"] += 1
         else:
-            print(f"          | FAILED: {r['reason']}\n")
+            print(f"           | FAILED: {r['reason']}\n")
             counts["failed"] += 1
 
     print_divider()
@@ -678,25 +993,19 @@ def run_reducer(source, dry_run):
 # ──────────────────────────────────────────────────────────────
 
 def run_all(source_dir, dry_run=False, subsort=True):
-    source = Path(
-        source_dir.strip().strip("'\"").rstrip("/").rstrip("\\")
-    ).resolve()
+    global _last_dry
 
+    source = Path(source_dir.strip().strip("'\"").rstrip("/").rstrip("\\")).resolve()
     if not source.exists():
         raise FileNotFoundError(f"Folder not found: '{source}'")
 
-    custom = load_custom_config()
-    cf     = custom.get("folders", [])
+    _last_dry = dry_run
 
     print(f"\n{'#'*67}")
     print(f"  FILE MANAGER  {'-- DRY RUN' if dry_run else ''}")
     print(f"{'#'*67}")
     print(f"  Source   : {source}")
-    print(f"  Matching : case-insensitive, plural-aware, "
-          f"{int(SIMILARITY_THRESHOLD*100)}% fuzzy")
     print(f"  Sub-sort : {'ON' if subsort else 'OFF'}")
-    if cf:
-        print(f"  Custom   : {', '.join(cf)}")
     print(f"{'#'*67}")
 
     sr = run_sort(source, dry_run)
@@ -710,17 +1019,43 @@ def run_all(source_dir, dry_run=False, subsort=True):
     if PIL_AVAILABLE:
         run_reducer(source, dry_run)
     else:
-        print("\n  Pillow not installed -- Step 4 skipped.")
-        print("  Fix: pip3 install Pillow\n")
+        print("\n  Pillow not installed -- Step 4 skipped.\n")
 
     print(f"{'#'*67}")
-    print(f"  ALL STEPS COMPLETE!")
+    print("  ALL STEPS COMPLETE!")
     if dry_run:
-        print(f"  DRY RUN -- no files were changed.")
-    if not subsort:
-        print(f"  Sub-sort was skipped.")
+        print("  DRY RUN -- no files were changed.")
     if _last_skipped:
-        print(f"  {len(_last_skipped)} unmatched file(s):")
-        for f in _last_skipped:
-            print(f"    - {f}")
+        print(f"  {len(_last_skipped)} unrecognized file(s) -- see Smart Sort panel.")
     print(f"{'#'*67}\n")
+
+
+# ──────────────────────────────────────────────────────────────
+#  SMART SORT — Save identifiers before a live run
+# ──────────────────────────────────────────────────────────────
+
+def save_identifiers(items):
+    """
+    Save confirmed identifiers WITHOUT moving files.
+    Used when the user confirms from a Dry Run preview: the
+    identifiers are saved, then a normal live run sorts everything.
+    If a name was edited, the detected name is saved as an alias
+    so files still match it.
+    """
+    saved = []
+    for item in items:
+        ident  = format_folder_name(item.get("name", ""))
+        orig   = format_folder_name(item.get("detected") or ident)
+        map_to = (item.get("map_to") or "").strip()
+        max_kb = _to_kb(item.get("max_kb"))
+        if map_to:
+            for alias in {ident, orig}:
+                if alias and section_key(alias) != section_key(map_to):
+                    save_alias(alias, map_to)
+            saved.append(f"{orig} -> {map_to}")
+        elif ident:
+            save_to_custom_config(ident, max_kb)
+            if orig and section_key(orig) != section_key(ident):
+                save_alias(orig, ident)
+            saved.append(ident)
+    return saved
