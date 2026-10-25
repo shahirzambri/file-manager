@@ -78,7 +78,7 @@ FOLDERS, ALIASES, SIZE_RULES (KB), SIMILARITY_THRESHOLD = 0.90, NOISE_WORDS
 (Write your next idea here before starting a new session.)
 
 ## Future Updates (parked)
-1. HIGH: Name-clash sub-sort bug: after a clash rename (name_1.jpg), sub-sort can move the old file instead of the new one.
+1. DONE: Name-clash sub-sort bug fixed (sub-sort moves the renamed new file; preview and Dry Run predict renames).
 2. Merge manual Unsorted panel into Smart Sort review ("Add a folder" row, whole-section matching, live in tree).
 3. Animated WebP loses animation on compression (same fix as GIF).
 4. Dates in filenames (e.g. 20250101) read as sub-sort sizes.
