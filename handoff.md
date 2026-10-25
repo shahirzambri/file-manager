@@ -86,3 +86,9 @@ FOLDERS, ALIASES, SIZE_RULES (KB), SIMILARITY_THRESHOLD = 0.90, NOISE_WORDS
 6. Remove test names (RAKUTEN, LAZADA, SHOPEE?) from custom_config.json.
 7. Size limits editor (Settings screen for Max KB per platform).
 8. Test the three-panel layout and tree on Windows.
+
+## Status (end of session)
+Done: GIF fix, shared plan engine, three-panel layout + Max KB fix, folder tree + live Smart Sort, Dry Run rehearsal, name-clash fix.
+In progress: item 6, cleaning test names from custom_config.json (clean_config.py on Desktop; backup at ~/Desktop/custom_config_backup.json).
+Next suggested: item 8 Windows test, then item 2 merge manual panel into Smart Sort.
+Delivery tip: prefer patch scripts over clipboard pastes; check files with grep before running.
