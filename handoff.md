@@ -76,3 +76,13 @@ FOLDERS, ALIASES, SIZE_RULES (KB), SIMILARITY_THRESHOLD = 0.90, NOISE_WORDS
 
 ## Next Task
 (Write your next idea here before starting a new session.)
+
+## Future Updates (parked)
+1. HIGH: Name-clash sub-sort bug: after a clash rename (name_1.jpg), sub-sort can move the old file instead of the new one.
+2. Merge manual Unsorted panel into Smart Sort review ("Add a folder" row, whole-section matching, live in tree).
+3. Animated WebP loses animation on compression (same fix as GIF).
+4. Dates in filenames (e.g. 20250101) read as sub-sort sizes.
+5. JPG/WebP compression drops embedded colour profiles.
+6. Remove test names (RAKUTEN, LAZADA, SHOPEE?) from custom_config.json.
+7. Size limits editor (Settings screen for Max KB per platform).
+8. Test the three-panel layout and tree on Windows.
