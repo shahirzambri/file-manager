@@ -398,9 +398,10 @@ def _rel(path, source):
         return None
 
 
-def _tree_entry(name, path, kb, pattern, status=None, limit_kb=None):
+def _tree_entry(name, path, kb, pattern, status=None, limit_kb=None, orig=None):
     return {
         "name":     name,       # filename as it is (or will be)
+        "orig":     orig or name,   # filename before any clash rename
         "path":     path,       # 'FOLDER/SUB/file.jpg', or 'file.jpg' if unsorted
         "kb":       kb,
         "pattern":  pattern,    # size pattern, used by the live Smart Sort preview
@@ -448,8 +449,8 @@ def _live_tree(subsort):
 def _plan_tree(plan, mode):
     files = []
     for e in plan["files"]:
-        t = _tree_entry(e["file"], e["dest"], e["kb"], e["pattern"],
-                        e["action"], e["limit_kb"])
+        t = _tree_entry(e["name"], e["dest"], e["kb"], e["pattern"],
+                        e["action"], e["limit_kb"], orig=e["file"])
         if mode == "dry" and e["file"] in _dry_results:
             t.update(_dry_results[e["file"]])
         files.append(t)
@@ -527,18 +528,23 @@ def run_sort(source, dry_run, plan=None):
         file = source / e["file"]
         tf   = e["folder"]
         if tf:
-            dest = resolve_conflict(source / tf / file.name)
+            dest = None if dry_run else resolve_conflict(source / tf / file.name)
+            dest_name = e.get("moved_as", file.name) if dry_run else dest.name
             print(f"  {'[DRY RUN]' if dry_run else 'Moved    '} | {file.name}")
-            print(f"            | -> {tf}/\n")
+            print(f"            | -> {tf}/")
+            if dest_name != file.name:
+                print(f"            | renamed to {dest_name} -- name already taken")
+            print()
             if not dry_run:
                 _move(file, dest, source)
-            results["moved"].append({"file": file.name, "folder": tf})
+            results["moved"].append({"file": dest_name, "folder": tf,
+                                     "orig": file.name})
         else:
             print(f"  No Match  | {file.name}\n")
             results["skipped"].append(file.name)
 
     _last_skipped    = list(results["skipped"])
-    _last_recognized = [e["file"] for e in results["moved"]]
+    _last_recognized = [e["orig"] for e in results["moved"]]
     _last_source     = source
 
     print_divider()
@@ -752,7 +758,7 @@ def apply_identifiers(items, subsort=True):
 
     if entries:
         if subsort:
-            run_subsort(source, entries, False)
+            final_names = run_subsort(source, entries, False) or final_names
         if PIL_AVAILABLE:
             run_reducer(source, False, only_folders=targets, only_names=final_names)
 
@@ -823,7 +829,7 @@ def create_custom_folder(folder_name, max_kb=None, dry_run=None, subsort=True):
 
     if entries:
         if subsort:
-            run_subsort(source, entries, False)
+            names = run_subsort(source, entries, False) or names
         if PIL_AVAILABLE:
             run_reducer(source, False, only_folders={folder_name}, only_names=names)
 
@@ -864,9 +870,11 @@ def run_subsort(source, moved_files, dry_run, patterns=None):
         print("\n  No files sorted -- skipping sub-sort.\n")
         return
 
-    fm = {}
+    fm, orig_of, final = {}, {}, {}
     for e in moved_files:
         fm.setdefault(e["folder"], []).append(e["file"])
+        orig_of[(e["folder"], e["file"])] = e.get("orig", e["file"])
+        final[(e["folder"], e["file"])] = e["file"]
 
     print_header("STEP 3 -- Dimension Sub-folder Sort")
     print("  Rule: Only sub-sorts if 2+ different patterns exist\n")
@@ -879,8 +887,9 @@ def run_subsort(source, moved_files, dry_run, patterns=None):
 
         pm = {}
         for f in fnames:
-            if patterns is not None and f in patterns:
-                pm[f] = patterns[f]
+            o = orig_of.get((fn, f), f)   # name before any clash rename
+            if patterns is not None and o in patterns:
+                pm[f] = patterns[o]
             else:
                 pm[f] = extract_number_pattern(f, fp / f)
         up = set(p for p in pm.values() if p)
@@ -899,10 +908,14 @@ def run_subsort(source, moved_files, dry_run, patterns=None):
                 sf   = fp / p
                 dest = resolve_conflict(sf / f)
                 print(f"  {'[DRY RUN]' if dry_run else 'Moved    '} | {f}")
-                print(f"            | -> {fn}/{p}/\n")
+                print(f"            | -> {fn}/{p}/")
+                if dest.name != f:
+                    print(f"            | renamed to {dest.name} -- name already taken")
+                print()
                 if not dry_run:
                     sf.mkdir(parents=True, exist_ok=True)
                     _move(fp / f, dest, source)
+                final[(fn, f)] = dest.name
                 tm += 1
             else:
                 print(f"  No pattern | {f}\n")
@@ -913,6 +926,7 @@ def run_subsort(source, moved_files, dry_run, patterns=None):
     print(f"  Single/None : {ts}")
     print(f"  No Pattern  : {tn}")
     print(f"{'='*67}\n")
+    return set(final.values())
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1321,13 +1335,33 @@ def plan_batch(source, subsort=True):
                 for e in items:
                     e["sub"] = e["pattern"]
 
+    # Predict clash renames exactly like resolve_conflict will:
+    # first into the platform folder, then into the size folder.
+    taken = set()
+
+    def claim(rel_dir, name):
+        stem, suffix = Path(name).stem, Path(name).suffix
+        cand, c = name, 1
+        while f"{rel_dir}/{cand}" in taken or (source / rel_dir / cand).exists():
+            cand = f"{stem}_{c}{suffix}"
+            c += 1
+        taken.add(f"{rel_dir}/{cand}")
+        return cand
+
+    for e in entries:
+        e["moved_as"] = claim(e["folder"], e["file"]) if e["folder"] else e["file"]
+        e["name"] = e["moved_as"]
+    for e in entries:
+        if e["folder"] and e["sub"]:
+            e["name"] = claim(f"{e['folder']}/{e['sub']}", e["moved_as"])
+
     # Step 4 decision, judged at the file's planned location
     for e in entries:
         parts = [p for p in (e["folder"], e["sub"]) if p]
-        e["dest"] = "/".join(parts + [e["file"]])
+        e["dest"] = "/".join(parts + [e["name"]])
         ckb = e.pop("_kb")
         e["kb"] = round(ckb, 1)
-        e.update(_compression_plan(source.joinpath(*parts, e["file"]), source, ckb))
+        e.update(_compression_plan(source.joinpath(*parts, e["name"]), source, ckb))
 
     return {
         "source":   str(source),

@@ -528,6 +528,8 @@ input:checked + .sl:before{transform:translateX(20px)}
 .tn-green{color:var(--green)}
 .tn-red{color:#ff7a70}
 .tn-blue{color:#7cc0ff}
+.tren{flex-shrink:0;font-size:10px;font-weight:700;color:#ffe066;background:rgba(255,214,10,.12);
+  padding:1px 7px;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
 
 ::-webkit-scrollbar{width:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -818,7 +820,14 @@ function treeFile(f,deep){
   var r=el("div","tfile"+(deep?" deep":"")+(f.pending?" pend":""));
   var n=el("span","tname",f.name);n.title=f.name;
   var nt=noteFor(f),s=el("span","tnote "+nt[1],nt[0]);s.title=nt[0];
-  r.appendChild(n);r.appendChild(s);return r;
+  r.appendChild(n);
+  if(f.orig&&f.orig!==f.name){
+    var rb=el("span","tren","renamed");
+    rb.title="Renamed from "+f.orig+": that name was already taken in this folder";
+    n.title=f.name+"\n"+rb.title;
+    r.appendChild(rb);
+  }
+  r.appendChild(s);return r;
 }
 function renderTree(){
   var box=document.getElementById("tree");box.innerHTML="";
