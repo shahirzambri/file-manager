@@ -446,11 +446,14 @@ def _live_tree(subsort):
 
 
 def _plan_tree(plan, mode):
-    return {"mode": mode, "subsort": plan["subsort"], "files": [
-        _tree_entry(e["file"], e["dest"], e["kb"], e["pattern"],
-                    e["action"], e["limit_kb"])
-        for e in plan["files"]
-    ]}
+    files = []
+    for e in plan["files"]:
+        t = _tree_entry(e["file"], e["dest"], e["kb"], e["pattern"],
+                        e["action"], e["limit_kb"])
+        if mode == "dry" and e["file"] in _dry_results:
+            t.update(_dry_results[e["file"]])
+        files.append(t)
+    return {"mode": mode, "subsort": plan["subsort"], "files": files}
 
 
 def get_last_tree():
@@ -1117,6 +1120,27 @@ def compress_image(fp, tkb):
             "under_target": nkb <= tkb, "dimensions": dims}
 
 
+_dry_results = {}   # Dry Run: filename -> exact compression result
+
+
+def _dry_compress(fp, tkb, okb):
+    """
+    Dry Run: compress in memory exactly like the real run would,
+    but never write. Same decisions as compress_image.
+    """
+    try:
+        data, _ = compress_to_bytes(fp, tkb)
+    except Exception as e:
+        return {"status": "will_fail", "limit_kb": tkb, "reason": str(e)}
+    nkb  = len(data) / 1024
+    base = {"limit_kb": tkb, "orig_kb": round(okb, 1), "new_kb": round(nkb, 1)}
+    if nkb >= okb:
+        return dict(base, status="will_keep", new_kb=None)
+    if nkb <= tkb:
+        return dict(base, status="will_compress")
+    return dict(base, status="will_over")
+
+
 def run_reducer(source, dry_run, only_folders=None, only_names=None, plan=None):
     """
     plan: optional result of plan_batch. In Dry Run, files have not
@@ -1155,9 +1179,15 @@ def run_reducer(source, dry_run, only_folders=None, only_names=None, plan=None):
     print_header("STEP 4 -- File Size Reduction  (PNG kept as-is)")
     print(f"  Files : {len(files)}\n")
 
+    decisions = []
     for file in files:
         ckb = get_size_kb(file)
-        d   = _compression_plan(redirect.get(file, file), source, ckb)
+        decisions.append((file, ckb,
+                          _compression_plan(redirect.get(file, file), source, ckb)))
+    to_check = sum(1 for _, _, d in decisions if d["action"] == "compress")
+    checked  = 0
+
+    for file, ckb, d in decisions:
 
         if d["action"] == "png":
             print(f"  PNG      | {file.name} -- {format_kb(ckb)}\n")
@@ -1185,8 +1215,25 @@ def run_reducer(source, dry_run, only_folders=None, only_names=None, plan=None):
         print(f"  Compress | {file.name}")
         print(f"           | Rule: {kw} -> {lim}  |  Current: {format_kb(ckb)}")
         if dry_run:
-            print("           | [DRY RUN]\n")
-            counts["compressed"] += 1
+            checked += 1
+            print(f"           | [DRY RUN] Checking {checked}/{to_check}...")
+            r = _dry_compress(file, mb, ckb)
+            _dry_results[_rel(file, source) or file.name] = r
+            if r["status"] == "will_compress":
+                print(f"           | Will be {format_kb(ckb)} -> "
+                      f"{format_kb(r['new_kb'])}  Target met\n")
+                counts["compressed"] += 1
+            elif r["status"] == "will_over":
+                print(f"           | Will be {format_kb(ckb)} -> {format_kb(r['new_kb'])}")
+                print(f"           | OVER LIMIT: will not reach {lim}\n")
+                counts["over_limit"] += 1
+            elif r["status"] == "will_keep":
+                print("           | OVER LIMIT: cannot make it smaller -- "
+                      "original will be kept\n")
+                counts["over_limit"] += 1
+            else:
+                print(f"           | WILL FAIL: {r['reason']}\n")
+                counts["failed"] += 1
             continue
 
         r = compress_image(file, mb)
@@ -1309,9 +1356,10 @@ def preview_tree(source_dir, subsort=True):
 # ──────────────────────────────────────────────────────────────
 
 def run_all(source_dir, dry_run=False, subsort=True):
-    global _last_dry, _last_tree, _batch
+    global _last_dry, _last_tree, _batch, _dry_results
 
-    _last_tree = None
+    _last_tree   = None
+    _dry_results = {}
     source = _resolve_source(source_dir)
     if not source.exists():
         raise FileNotFoundError(f"Folder not found: '{source}'")

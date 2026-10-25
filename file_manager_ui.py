@@ -794,6 +794,10 @@ function noteFor(f){
     case "over_limit": return[fmtKb(f.orig_kb)+" \u2192 "+fmtKb(f.new_kb)+" \u00b7 over "+L,"tn-red"];
     case "kept":       return["over "+L+" \u00b7 original kept","tn-red"];
     case "failed":     return["failed"+(f.reason?": "+f.reason:""),"tn-red"];
+    case "will_compress": return["will be "+fmtKb(f.orig_kb)+" \u2192 "+fmtKb(f.new_kb),"tn-green"];
+    case "will_over":     return["can't reach "+L+" (best: "+fmtKb(f.new_kb)+")","tn-red"];
+    case "will_keep":     return["can't make it smaller \u00b7 original will be kept","tn-red"];
+    case "will_fail":     return["will fail"+(f.reason?": "+f.reason:""),"tn-red"];
   }
   return[fmtKb(f.kb),"tn-dim"];
 }
