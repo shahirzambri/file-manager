@@ -44,17 +44,23 @@ A macOS and Windows automation tool that organises advertising and creative file
 
 ## 🚀 Installation
 
-### macOS
+## macOS
 
-1. Install Python from [python.org/downloads](https://python.org/downloads) if not already installed
+> **Company MacBooks:** two steps need an admin username and password: installing Python (step 1) and allowing the installer to open (step 7). Ask IT for help with these if you don't have admin access.
+
+1. Install Python from [python.org/downloads](https://www.python.org/downloads/) if not already installed (**admin required**)
 2. Click the green **Code** button on this page, then **Download ZIP**
 3. Unzip the downloaded file
 4. Open the **mac** folder
 5. Double-click **FileManager_Setup.command**
-6. If macOS blocks it: right-click, then Open, then Open again
-7. Follow the on-screen instructions
-8. **FileManager.command** appears on your Desktop. Double-click it anytime to launch
-9. Tip: drag FileManager.command to your Dock for quick access
+6. macOS shows **"FileManager_Setup.command" Not Opened**. Click **Done** (not Move to Trash)
+7. Open **System Settings → Privacy & Security**, scroll down to **Security**, and click **Open Anyway** next to the message about FileManager_Setup.command. Enter an admin username and password when asked (**admin required**)
+8. Double-click **FileManager_Setup.command** again, and click **Open** if asked
+9. Follow the on-screen instructions
+10. **FileManager.command** appears on your Desktop. Double-click it anytime to open the app
+11. Tip: drag FileManager.command to your Dock for quick access
+
+**Don't see Open Anyway?** The button only appears for about an hour after macOS blocks the file. Double-click FileManager_Setup.command again, click Done, and go back to Privacy & Security.
 
 ### Windows
 
